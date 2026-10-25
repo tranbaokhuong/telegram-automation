@@ -1,0 +1,1515 @@
+{
+  "name": "automation telegram",
+  "nodes": [
+    {
+      "parameters": {
+        "modelName": "models/gemini-3.1-flash-lite",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        2080,
+        272
+      ],
+      "id": "d373817a-0fe6-4dc8-a102-b80c4a2150dc",
+      "name": "Google Gemini Chat Model"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram - Nhận tin nhắn').first().json.message.chat.id }}",
+        "text": "=Dạ hồ sơ của bạn đã được chuyển cho chuyên viên tư vấn. Bên mình sẽ liên hệ qua số điện thoại trong ít phút nữa. Xin cảm ơn bạn!",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        144,
+        -208
+      ],
+      "id": "6e73895c-a028-469a-9a63-5c622a1d580a",
+      "name": "Dừng chatbot"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "d6928305-15da-4e81-8537-f5939991e759",
+              "leftValue": "={{ $('Notion - Đọc lead sau gom tin').first().json.property_b_o_sale === true }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -160,
+        -144
+      ],
+      "id": "dd90354f-a862-4687-9a51-d210aebf5850",
+      "name": "Đã báo chuyển sale?"
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "update",
+        "pageId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $('Notion - Đọc lead sau gom tin').first().json.id }}",
+          "__regex": "^([0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12})"
+        },
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Tin nhắn chuẩn hoá cuối|rich_text",
+              "textContent": "={{ $('Code kiểm tra spam').first().json.normalized_message }}"
+            },
+            {
+              "key": "Số lần spam|number",
+              "numberValue": "={{ $('Code kiểm tra spam').first().json.spam_count }}"
+            },
+            {
+              "key": "Bot tạm dừng?|checkbox",
+              "checkboxValue": "={{ $('Code kiểm tra spam').first().json.pause_bot === true }}"
+            },
+            {
+              "key": "Lý do tạm dừng|rich_text",
+              "textContent": "={{ $('Code kiểm tra spam').first().json.pause_bot === true ? $('Code kiểm tra spam').first().json.spam_reason : '' }}"
+            },
+            {
+              "key": "Số lần lặp gần giống|number",
+              "numberValue": "={{ $('Code kiểm tra spam').first().json.repeat_count }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        640,
+        -48
+      ],
+      "id": "b8d3e346-0ba1-47b8-8d6d-812296789dd0",
+      "name": "Cập nhật theo dõi spam"
+    },
+    {
+      "parameters": {
+        "jsCode": "const crm = $('Notion - Đọc lead sau gom tin').first().json || {};\n\nconst latestMessage =\n  $('Telegram - Nhận tin nhắn').first().json.message?.text ||\n  $('Telegram - Nhận tin nhắn').first().json.message?.caption ||\n  '';\n\nconst saleStageForSpam = String(\n  crm.property_giai_o_n_sale ||\n  crm.property_giai_doan_sale ||\n  ''\n).trim();\n\nconst isUnreachableFollowUp =\n  saleStageForSpam === 'Không liên hệ được' &&\n  /gọi|liên hệ|số điện thoại|sđt|nghe máy|chưa|rảnh|tiện/i.test(String(latestMessage || ''));\n\nfunction normalizeText(input) {\n  return String(input || '')\n    .toLowerCase()\n    .normalize('NFD')\n    .replace(/[\\u0300-\\u036f]/g, '')\n    .replace(/đ/g, 'd')\n    .replace(/[0-9]+$/g, '')\n    .replace(/[^a-z0-9\\s]/g, ' ')\n    .replace(/\\s+/g, ' ')\n    .trim();\n}\n\nfunction tokenSimilarity(a, b) {\n  const aTokens = new Set(String(a || '').split(' ').filter(Boolean));\n  const bTokens = new Set(String(b || '').split(' ').filter(Boolean));\n\n  if (aTokens.size === 0 || bTokens.size === 0) return 0;\n\n  let intersection = 0;\n  for (const token of aTokens) {\n    if (bTokens.has(token)) intersection++;\n  }\n\n  const union = new Set([...aTokens, ...bTokens]).size;\n  return intersection / union;\n}\n\nfunction getValue(...keys) {\n  for (const key of keys) {\n    if (crm[key] !== undefined && crm[key] !== null && crm[key] !== '') {\n      return crm[key];\n    }\n  }\n  return '';\n}\n\nfunction looksLikePhone(text) {\n  const raw = String(text || '').trim();\n  const digitsOnly = raw.replace(/\\D/g, '');\n\n  return /^[\\d\\s\\.\\-\\+]+$/.test(raw) && digitsOnly.length >= 5;\n}\n\nfunction hasMeaningfulWebsiteIntent(text) {\n  const n = normalizeText(text);\n  if (!n) return false;\n\n  const meaningfulWords = [\n    'web', 'website', 'landing', 'landingpage',\n    'ban hang', 'gio hang', 'my pham', 'bat dong san',\n    'doanh nghiep', 'cong ty', 'spa', 'nha hang',\n    'khach san', 'du an', 'bao gia', 'thiet ke',\n    'lap trinh', 'crm', 'erp', 'api', 'seo',\n    'dat lich', 'thanh toan', 'van chuyen',\n    'san pham', 'dich vu', 'tin tuc', 'blog'\n  ];\n\n  return meaningfulWords.some(word => n.includes(word));\n}\n\nfunction isLikelyGibberish(text) {\n  const raw = String(text || '').trim();\n  const normalized = normalizeText(raw);\n\n  if (!normalized) return false;\n  if (looksLikePhone(raw)) return false;\n  if (hasMeaningfulWebsiteIntent(raw)) return false;\n\n  const tokens = normalized.split(' ').filter(Boolean);\n\n  const allowWords = [\n    'web', 'website', 'landing', 'landingpage', 'crm', 'erp', 'api',\n    'seo', 'app', 'wordpress', 'shopify', 'sapo', 'haravan',\n    'ban', 'hang', 'gio', 'thanh', 'toan', 'van', 'chuyen',\n    'doanh', 'nghiep', 'bat', 'dong', 'san', 'my', 'pham',\n    'khach', 'nha', 'spa', 'du', 'an', 'bao', 'gia',\n    'thiet', 'ke', 'lap', 'trinh', 'tich', 'hop', 'phan', 'quyen',\n    'minh', 'can', 'muon', 'lam', 'cho', 'hoi', 'tu', 'van'\n  ];\n\n  const hasAllowedWord = tokens.some(token => allowWords.includes(token));\n  if (hasAllowedWord) return false;\n\n  // Một từ dài, không rõ nghĩa, ví dụ: daiurtwet, aeyertgdrfg\n  if (tokens.length === 1 && tokens[0].length >= 6) {\n    return true;\n  }\n\n  // Nhiều token nhưng hầu hết là chuỗi lạ dài\n  const weirdTokens = tokens.filter(token => {\n    if (token.length < 6) return false;\n    if (allowWords.includes(token)) return false;\n    return true;\n  });\n\n  if (tokens.length >= 2 && weirdTokens.length / tokens.length >= 0.6) {\n    return true;\n  }\n\n  return false;\n}\n\nconst normalizedMessage = normalizeText(latestMessage);\n\nconst storedNormalized = normalizeText(getValue(\n  'property_tin_nh_n_chu_n_ho_cu_i',\n  'property_tin_nh_n_chuan_hoa_cuoi',\n  'property_tin_nh_chuan_hoa_cuoi'\n));\n\nconst previousRepeatCount = Number(getValue(\n  'property_s_l_n_l_p_g_n_gi_ng',\n  'property_so_lan_lap_gan_giong',\n  'property_s_l_n_l_p_g_n_gi_ng_'\n) || 0);\n\nconst previousSpamCount = Number(getValue(\n  'property_s_l_n_spam',\n  'property_so_lan_spam'\n) || 0);\n\nconst botAlreadyPaused =\n  crm.property_bot_t_m_d_ng === true ||\n  crm.property_bot_tam_dung === true;\n\nconst pendingText = String(crm.property_tin_nh_n_ch || '');\nconst pendingLines = pendingText\n  .split('\\n')\n  .map(x => x.trim())\n  .filter(Boolean);\n\nconst previousFromPending =\n  pendingLines.length >= 2\n    ? normalizeText(pendingLines[pendingLines.length - 2])\n    : '';\n\nconst previousNormalized = storedNormalized || previousFromPending;\n\nconst isExactRepeat =\n  previousNormalized &&\n  normalizedMessage &&\n  normalizedMessage === previousNormalized;\n\nconst isNearRepeat =\n  previousNormalized &&\n  normalizedMessage &&\n  !isExactRepeat &&\n  tokenSimilarity(previousNormalized, normalizedMessage) >= 0.82;\n\nconst repeatedChars = /(.)\\1{5,}/.test(normalizedMessage);\n\nconst tooShortNonsense =\n  normalizedMessage.length > 0 &&\n  normalizedMessage.length <= 2 &&\n  !looksLikePhone(latestMessage);\n\nconst badWords = [\n  'dm', 'dmm', 'clm', 'dit', 'lon', 'cac', 'cc',\n  'fuck', 'shit'\n];\n\nconst hasBadWord = badWords.some(word =>\n  normalizedMessage.split(' ').includes(word)\n);\n\n// Kiểm tra spam trong toàn bộ Tin nhắn chờ đã gom\nconst suspiciousPendingLines = pendingLines.filter(line => {\n  const n = normalizeText(line);\n\n  if (!n) return false;\n  if (looksLikePhone(line)) return false;\n  if (hasMeaningfulWebsiteIntent(line)) return false;\n\n  return (\n    isLikelyGibberish(line) ||\n    /(.)\\1{5,}/.test(n) ||\n    badWords.some(word => n.split(' ').includes(word))\n  );\n});\n\nconst hasManyPendingMessages = pendingLines.length >= 3;\nconst hasManyGibberishMessages = suspiciousPendingLines.length >= 2;\n\nconst hasMeaningfulIntent = hasMeaningfulWebsiteIntent(latestMessage);\n\nlet repeatCount = (isExactRepeat || isNearRepeat)\n  ? previousRepeatCount + 1\n  : 0;\n\nlet spamCount = previousSpamCount;\nlet shouldSkipAI = false;\nlet pauseBot = botAlreadyPaused;\nlet spamReason = '';\nlet spamReply = '';\n\n// ===============================\n// LOGIC CHỐNG SPAM MỚI\n// ===============================\n\nif (isUnreachableFollowUp && !hasBadWord) {\n  // Khách hỏi lại sau khi Sale không liên hệ được thì không tính spam\n  repeatCount = 0;\n  shouldSkipAI = false;\n  pauseBot = botAlreadyPaused;\n  spamReason = 'Không';\n  spamReply = '';\n\n} else if (botAlreadyPaused) {\n  shouldSkipAI = true;\n  pauseBot = true;\n  spamReason = 'Bot đang tạm dừng do spam';\n  spamReply =\n    'Dạ cuộc trò chuyện này đang được tạm dừng xử lý tự động vì trước đó có nhiều tin nhắn không rõ nội dung. Nếu bạn cần tư vấn website thật, vui lòng nhắn lại một nội dung rõ ràng sau nhé.';\n\n} else if (hasManyPendingMessages && hasManyGibberishMessages) {\n  shouldSkipAI = true;\n  pauseBot = true;\n  spamCount += 1;\n  repeatCount += 1;\n  spamReason = 'Khách gửi nhiều tin nhắn vô nghĩa liên tiếp';\n  spamReply =\n    'Dạ mình tạm dừng xử lý tự động cuộc trò chuyện này vì có nhiều tin nhắn không rõ nội dung. Bên mình sẽ kiểm tra lại sau nhé.';\n\n} else if (hasBadWord || repeatedChars || tooShortNonsense || isLikelyGibberish(latestMessage)) {\n  shouldSkipAI = true;\n  spamCount += 1;\n  spamReason = hasBadWord\n    ? 'Tin nhắn có nội dung không phù hợp'\n    : 'Tin nhắn có dấu hiệu spam hoặc không rõ nội dung';\n\n  if (spamCount >= 2) {\n    pauseBot = true;\n    spamReply =\n      'Dạ mình tạm dừng xử lý tự động cuộc trò chuyện này vì có dấu hiệu spam. Bên mình sẽ kiểm tra lại sau nhé.';\n  } else {\n    pauseBot = false;\n    spamReply =\n      'Dạ bạn nhắn giúp mình nội dung rõ hơn về nhu cầu làm website để mình tư vấn chính xác nhé.';\n  }\n\n} else if ((isExactRepeat || isNearRepeat) && repeatCount <= 3) {\n  // Lặp nhẹ 1-3 lần: KHÔNG chặn AI\n  // Vì workflow đã có Wait + Trạm chốt chặn tin cuối, nên chỉ tin cuối được xử lý\n  shouldSkipAI = false;\n  pauseBot = false;\n  spamReason = 'Tin nhắn lặp nhẹ nhưng vẫn cho AI xử lý';\n  spamReply = '';\n\n} else if ((isExactRepeat || isNearRepeat) && repeatCount >= 4 && repeatCount < 6) {\n  // Lặp nhiều hơn: nhắc nhẹ, không tính spam, không tạm dừng\n  shouldSkipAI = true;\n  pauseBot = false;\n  spamReason = 'Khách gửi lặp nhiều lần';\n  spamReply =\n    'Dạ mình đã nhận được nhiều tin nhắn giống nhau rồi. Bạn chờ mình xử lý thông tin để tránh bị trùng nhé.';\n\n} else if ((isExactRepeat || isNearRepeat) && repeatCount >= 6) {\n  // Lặp quá nhiều mới tính spam/tạm dừng\n  shouldSkipAI = true;\n  pauseBot = true;\n  spamCount += 1;\n  spamReason = 'Khách gửi lặp quá nhiều lần';\n  spamReply =\n    'Dạ mình đã nhận được nhiều tin nhắn giống nhau rồi. Mình tạm ghi nhận thông tin để tránh xử lý trùng nhé.';\n}\n\n// Không chặn số điện thoại lần đầu\nif (looksLikePhone(latestMessage) && repeatCount === 0 && !hasBadWord) {\n  shouldSkipAI = false;\n  pauseBot = botAlreadyPaused;\n  spamReason = 'Không';\n  spamReply = '';\n}\n\n// Nếu nội dung có nhu cầu website rõ ràng và chỉ lặp nhẹ, ưu tiên cho AI xử lý\nif (\n  hasMeaningfulIntent &&\n  (isExactRepeat || isNearRepeat) &&\n  repeatCount <= 3 &&\n  !hasBadWord &&\n  !botAlreadyPaused\n) {\n  shouldSkipAI = false;\n  pauseBot = false;\n  spamReason = 'Tin nhắn lặp nhẹ nhưng có nhu cầu website rõ ràng';\n  spamReply = '';\n}\n\nreturn [{\n  json: {\n    latest_message: latestMessage,\n    normalized_message: normalizedMessage,\n    previous_normalized: previousNormalized || '',\n    pending_lines_count: pendingLines.length,\n    suspicious_pending_lines_count: suspiciousPendingLines.length,\n    repeat_count: repeatCount,\n    spam_count: spamCount,\n    should_skip_ai: shouldSkipAI,\n    pause_bot: pauseBot,\n    spam_reason: spamReason || 'Không',\n    spam_reply: spamReply || ''\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        416,
+        -48
+      ],
+      "id": "e112b337-8c7f-4b59-9935-0ef4ed5ad879",
+      "name": "Code kiểm tra spam"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "56f895b0-5b81-41bb-920d-51709aafc5ef",
+              "leftValue": "={{ $('Code kiểm tra spam').first().json.should_skip_ai === true }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        880,
+        -48
+      ],
+      "id": "d3fcafe2-50da-4a4e-a418-a3235012662b",
+      "name": "Chặn AI?"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram - Nhận tin nhắn').first().json.message.chat.id }}",
+        "text": "={{ $('Code kiểm tra spam').first().json.spam_reply || 'Dạ mình đã nhận được tin nhắn của bạn rồi nhé.' }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1552,
+        -176
+      ],
+      "id": "b1594cb2-39e0-4d9e-9c68-2d9b08554fa3",
+      "name": "Dừng chatbot1"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "cf27368b-c878-44ab-aa6f-ec0243853932",
+              "leftValue": "={{ $('Code kiểm tra spam').first().json.pause_bot === true }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1152,
+        -192
+      ],
+      "id": "48b09c58-94d6-4b88-9805-8441e744db14",
+      "name": "Spam nặng?"
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "update",
+        "pageId": {
+          "__rl": true,
+          "value": "={{ $('Notion - Đọc lead sau gom tin').first().json.id }}",
+          "mode": "id"
+        },
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Trạng thái BOT|status",
+              "statusValue": "={{ 'Spam / Tạm dừng' }}"
+            },
+            {
+              "key": "Giai đoạn Sale|status",
+              "statusValue": "={{ 'Spam / Không phù hợp' }}"
+            },
+            {
+              "key": "Bot tạm dừng?|checkbox",
+              "checkboxValue": "={{ true }}"
+            },
+            {
+              "key": "Lý do tạm dừng|rich_text",
+              "textContent": "={{ $('Code kiểm tra spam').first().json.spam_reason || 'Spam / Không phù hợp' }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        1328,
+        -352
+      ],
+      "id": "c84e3917-6480-459f-9c4b-fcab685c0541",
+      "name": "Cập nhật trạng thái spam nặng"
+    },
+    {
+      "parameters": {
+        "amount": "={{ 2 + ($('Telegram - Nhận tin nhắn').first().json.message.message_id % 4) }}"
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        -1744,
+        -16
+      ],
+      "id": "30703504-5aff-45de-abe9-583d6d8368c8",
+      "name": "Wait2"
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "getAll",
+        "databaseId": {
+          "__rl": true,
+          "value": "YOUR_NOTION_DATABASE_ID",
+          "mode": "list",
+          "cachedResultName": "Quản lý Lead CRM",
+          "cachedResultUrl": "https://app.notion.com/p/YOUR_NOTION_DATABASE_ID"
+        },
+        "filterType": "manual",
+        "matchType": "allFilters",
+        "filters": {
+          "conditions": [
+            {
+              "key": "Chat ID|rich_text",
+              "condition": "equals",
+              "richTextValue": "={{ $('Telegram - Nhận tin nhắn').first().json.message.chat.id.toString() }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        -1600,
+        -16
+      ],
+      "id": "b7d94347-4712-4974-949b-ba9c32fc6de2",
+      "name": "Search Khách cũ lần 1B",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "3dd138cf-b4d1-4277-9f20-508506f5de16",
+              "leftValue": "={{ $json.id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -1408,
+        -16
+      ],
+      "id": "cf886e52-6d06-4bcf-934c-d597fc6dffb3",
+      "name": "Đã có page sau khi chờ?"
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "update",
+        "pageId": {
+          "__rl": true,
+          "value": "={{ $('Search Khách cũ lần 1B').first().json.id }}",
+          "mode": "id"
+        },
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "message_id|number",
+              "numberValue": "={{ $('Telegram - Nhận tin nhắn').item.json.message.message_id }}"
+            },
+            {
+              "key": "Tin nhắn chờ|rich_text",
+              "textContent": "={{ [\n  $('Search Khách cũ lần 1B').first().json?.property_tin_nh_n_ch,\n  $('Telegram - Nhận tin nhắn').first().json.message?.text || $('Telegram - Nhận tin nhắn').first().json.message?.caption\n].filter(Boolean).join('\\n') }}"
+            },
+            {
+              "key": "Cập nhật cuối|date",
+              "date": "={{ $now.setZone('Asia/Ho_Chi_Minh').toISO() }}",
+              "timezone": "Asia/Ho_Chi_Minh"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        -976,
+        -128
+      ],
+      "id": "72c27386-df53-4db6-8bb9-ed3f28191bec",
+      "name": "Update page sau kiểm tra trùng",
+      "retryOnFail": true
+    },
+    {
+      "parameters": {
+        "content": "# 1. Nhận tin nhắn từ Telegram\n\nMục đích:\nNhận tin nhắn khách gửi vào bot Telegram.\n\nLuồng xử lý:\n- Telegram Trigger nhận message từ khách.\n- Node If kiểm tra tin nhắn có text/caption hay không.\n- Nếu khách gửi ảnh/file/sticker không có chữ, bot trả lời yêu cầu khách nhắn bằng chữ.\n- Nếu có nội dung chữ, workflow tiếp tục xử lý lead.\n\n",
+        "height": 1296,
+        "width": 624
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -3008,
+        -768
+      ],
+      "typeVersion": 1,
+      "id": "dd132b78-8c0c-4a2a-8e8c-827e769a036f",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "content": "# 2. Kiểm tra khách cũ trong Notion CRM\n\nMục đích:\nXác định khách nhắn tin là khách cũ hay khách mới.\n\nLuồng xử lý:\n- Wait1 chờ ngắn để tránh xử lý quá nhanh.\n- Search Khách cũ lần 1 tìm lead trong Notion bằng Chat ID.\n- Phân loại mới/cũ kiểm tra có page Notion tương ứng hay chưa.\n\nKết quả:\n- Nếu đã có khách cũ → cập nhật tin nhắn mới vào dòng Notion cũ.\n- Nếu chưa có khách → đi sang nhánh kiểm tra trùng trước khi tạo lead mới.\n\n",
+        "height": 1296,
+        "width": 592,
+        "color": 4
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -2368,
+        -768
+      ],
+      "typeVersion": 1,
+      "id": "d04523f2-92c3-4691-8db1-17fe6ee9f32b",
+      "name": "Sticky Note1"
+    },
+    {
+      "parameters": {
+        "content": "# 3. Chống tạo trùng lead mới\n\nMục đích:\nTránh trường hợp khách nhắn nhiều tin liên tục làm Notion tạo nhiều dòng lead trùng Chat ID.\n\nLuồng xử lý:\n- Nếu lần tìm đầu chưa thấy khách, workflow không tạo ngay.\n- Wait2 chờ thêm một khoảng ngắn.\n- Search Khách cũ lần 1B kiểm tra lại lần nữa.\n- Nếu sau khi chờ đã có page thì update page đó.\n- Nếu vẫn chưa có page thì mới tạo lead mới trong Notion.\n\nDữ liệu được tạo/cập nhật:\n- Chat ID\n- message_id\n- Tin nhắn chờ\n- Trạng thái BOT\n- Giai đoạn Sale\n- Cờ Đã báo Sale?\n- Cờ Bot tạm dừng?\n- Số lần spam\n- Cập nhật cuối\n",
+        "height": 1296,
+        "width": 704,
+        "color": 3
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -1776,
+        -768
+      ],
+      "typeVersion": 1,
+      "id": "874f1a62-ec09-4a67-abf5-913e2118f744",
+      "name": "Sticky Note2"
+    },
+    {
+      "parameters": {
+        "content": "# 4. Gom tin nhắn và chốt tin cuối\n\nMục đích:\nGom nhiều tin nhắn liên tiếp của khách thành một lần xử lý, tránh bot trả lời từng câu nhỏ.\n\nLuồng xử lý:\n- Các nhánh tạo mới hoặc cập nhật khách cũ đều đi vào Wait.\n- Wait chờ để khách có thời gian nhắn thêm.\n- Search Khách cũ lần 2 đọc lại dữ liệu mới nhất trong Notion.\n- Trạm chốt chặn tin cuối so sánh message_id hiện tại với message_id mới nhất.\n- Chỉ tin nhắn cuối cùng mới được đưa đi xử lý tiếp.\n",
+        "height": 1296,
+        "width": 768,
+        "color": 5
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -1056,
+        -768
+      ],
+      "typeVersion": 1,
+      "id": "4ec9af87-e287-4668-9e80-75e5cbdca525",
+      "name": "Sticky Note3"
+    },
+    {
+      "parameters": {
+        "content": "# 5. Kiểm tra trạng thái đã chuyển Sale\n\nMục đích:\nNếu lead đã được chuyển cho Sale rồi thì bot không gọi AI nữa để tiết kiệm token và tránh trả lời sai ngữ cảnh.\n\nLuồng xử lý:\n- Node Đã báo chuyển sale? kiểm tra cờ trong Notion.\n- Nếu Đã báo Sale? = true hoặc Bot tạm dừng? = true:\n  - Bot không chạy AI Agent.\n  - Bot gửi câu trả lời cố định qua node Dừng chatbot.\n- Nếu chưa chuyển Sale:\n  - Workflow đi tiếp sang phần kiểm tra spam và AI tư vấn.\n\n",
+        "height": 1296,
+        "width": 608,
+        "color": 4
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -272,
+        -768
+      ],
+      "typeVersion": 1,
+      "id": "5371c704-89ca-47e1-956b-3a20699d303a",
+      "name": "Sticky Note4"
+    },
+    {
+      "parameters": {
+        "content": "# 6. Kiểm tra spam và tin nhắn lặp\n\nMục đích:\nPhát hiện khách gửi quá nhiều tin giống nhau, tin vô nghĩa hoặc spam để tránh gọi AI không cần thiết.\n\nLuồng xử lý:\n- Code kiểm tra spam phân tích tin nhắn mới nhất và lịch sử trong Notion.\n- Cập nhật theo dõi spam lưu số lần spam, số lần lặp gần giống và nội dung chuẩn hoá.\n- Chặn AI? quyết định có cho đi tiếp vào AI Agent hay không.\n- Nếu spam nhẹ:\n  - Bot gửi phản hồi nhắc khách chờ xử lý.\n- Nếu spam nặng:\n  - Cập nhật trạng thái spam nặng trong Notion.\n  - Bot tạm dừng hoặc trả lời bằng mẫu cố định.\n\n",
+        "height": 1296,
+        "width": 1392,
+        "color": 2
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        368,
+        -768
+      ],
+      "typeVersion": 1,
+      "id": "c053b77d-b0fa-4def-b0b9-9091505269a1",
+      "name": "Sticky Note5"
+    },
+    {
+      "parameters": {
+        "content": "# 7. AI tư vấn và chuẩn hoá dữ liệu\n\nMục đích:\nDùng AI để tư vấn khách, sau đó tách thông tin khách thành dữ liệu có cấu trúc.\n\nLuồng xử lý:\n- AI Agent đọc CRM hiện tại và tin nhắn khách để tạo câu trả lời tự nhiên.\n- Basic LLM Chain đọc câu trả lời của AI Agent, tin nhắn khách và dữ liệu CRM.\n- Basic LLM Chain xuất JSON gồm:\n  - customer_name\n  - phone_number\n  - need_summary\n  - customer_ai_note\n  - reply_message\n  - handoff_needed\n  - handoff_reason\n- Code in JavaScript kiểm tra lại JSON, validate SĐT, xử lý nhu cầu, ghi chú và quyết định có cần báo Sale không.\n\nCác logic quan trọng trong Code:\n- Kiểm tra SĐT Việt Nam hợp lệ.\n- Không xin số điện thoại quá sớm.\n- Không chuyển Sale chỉ vì khách mới nói nhu cầu chung.\n- Xử lý câu trả lời mơ hồ như \"có ạ\".\n- Ghi chú khách / AI không được suy diễn sai.\n- Giữ ghi chú cũ nếu ghi chú mới quá chung chung.\n- Xử lý trường hợp Sale không liên hệ được.\n\n",
+        "height": 1296,
+        "width": 1040
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        1776,
+        -768
+      ],
+      "typeVersion": 1,
+      "id": "f01ee41b-f68f-46ee-9b2e-bb7682ff8d26",
+      "name": "Sticky Note6"
+    },
+    {
+      "parameters": {
+        "content": "# 8. Cập nhật CRM và trả lời khách\n\nMục đích:\nLưu dữ liệu đã xử lý vào Notion CRM và gửi phản hồi cho khách trên Telegram.\n\nLuồng xử lý:\n- Update a database page cập nhật lại dòng lead trong Notion.\n- Các trường được cập nhật gồm:\n  - Tên khách hàng\n  - Số điện thoại\n  - Nhu cầu\n  - Trạng thái BOT\n  - Cần Sale hỗ trợ?\n  - Lý do chuyển Sale\n  - Ghi chú khách / AI\n  - Tin nhắn chờ\n- Tư vấn và xin thông tin gửi reply_message về cho khách.\n\n",
+        "height": 1296,
+        "width": 720,
+        "color": 3
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        2832,
+        -768
+      ],
+      "typeVersion": 1,
+      "id": "5c27711c-d6a0-417a-b55d-709a67e7fc38",
+      "name": "Sticky Note7"
+    },
+    {
+      "parameters": {
+        "content": "# 9. Chuyển lead cho Sale\n\nMục đích:\nChỉ chuyển khách cho Sale khi đủ điều kiện thật sự cần tư vấn trực tiếp.\n\nĐiều kiện chuyển Sale:\n- SĐT hợp lệ.\n- handoff_needed = true.\n- should_notify_sale = true.\n- Lead chưa từng báo Sale.\n- Bot chưa bị tạm dừng.\n\nLuồng xử lý:\n- Lọc SDT cho Sale kiểm tra toàn bộ điều kiện.\n- Nếu đạt điều kiện, Thông báo có khách cần tư vấn gửi thông tin sang group Sale Telegram.\n- Cập nhật sau khi báo sale set trạng thái trong Notion:\n  - Trạng thái BOT = Đã chuyển Sale\n  - Giai đoạn Sale = Chờ sale gọi\n  - Đã báo Sale? = true\n  - Bot tạm dừng? = true\n  - Cần Sale hỗ trợ? = true\n  - Đã chuyển Sale lúc\n  - Lý do tạm dừng\n",
+        "height": 1296,
+        "width": 720,
+        "color": 5
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        3568,
+        -768
+      ],
+      "typeVersion": 1,
+      "id": "bf727d8f-5a11-469d-9dbc-376e72d89a24",
+      "name": "Sticky Note8"
+    },
+    {
+      "parameters": {
+        "content": "\n# Tổng quan dự án: Telegram AI CRM Automation\n\nMục tiêu:\nTự động tiếp nhận khách hàng từ Telegram, tư vấn bước đầu bằng AI, lưu thông tin vào Notion CRM và chỉ chuyển Sale khi khách thật sự cần hỗ trợ trực tiếp.\n\nCông nghệ sử dụng:\n- Telegram Bot: nhận và gửi tin nhắn khách.\n- Notion CRM: lưu lead, trạng thái bot, trạng thái Sale, ghi chú khách.\n- AI Agent: tư vấn khách tự nhiên.\n- Basic LLM Chain: tách dữ liệu thành JSON.\n- JavaScript Code Node: kiểm tra logic, SĐT, spam, ghi chú và điều kiện chuyển Sale.\n- Telegram Group Sale: nhận thông báo khách cần tư vấn.\n\nĐiểm nổi bật:\n- Chống tạo trùng lead bằng Chat ID.\n- Gom tin nhắn để bot không trả lời từng dòng nhỏ.\n- Không chuyển Sale khi khách chỉ mới nói nhu cầu chung.\n- Tự ghi chú khách / AI cho Sale.\n- Tạm dừng bot sau khi đã chuyển Sale.\n- Có xử lý spam và trường hợp Sale không liên hệ được.",
+        "height": 2240,
+        "width": 7472,
+        "color": 6
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -3040,
+        -1552
+      ],
+      "typeVersion": 1,
+      "id": "7e7f1760-8507-4a6b-9bdd-ad23465c0fd6",
+      "name": "Sticky Note9"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram - Nhận tin nhắn').item.json.message.chat.id }}",
+        "text": "={{ 'Dạ bạn nhắn giúp mình bằng chữ để mình tư vấn chính xác hơn nhé.' }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -2528,
+        128
+      ],
+      "id": "31276582-9131-4bfb-81c0-03d6b2ebae64",
+      "name": "Telegram - Nhắc nhắn bằng chữ"
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "getAll",
+        "databaseId": {
+          "__rl": true,
+          "value": "YOUR_NOTION_DATABASE_ID",
+          "mode": "list",
+          "cachedResultName": "Quản lý Lead CRM",
+          "cachedResultUrl": "https://app.notion.com/p/YOUR_NOTION_DATABASE_ID"
+        },
+        "filterType": "manual",
+        "matchType": "allFilters",
+        "filters": {
+          "conditions": [
+            {
+              "key": "Chat ID|rich_text",
+              "condition": "equals",
+              "richTextValue": "={{ $('Telegram - Nhận tin nhắn').first().json.message.chat.id.toString() }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        -2160,
+        -112
+      ],
+      "id": "70dde57b-a3b9-4982-96cb-c75f5e1f6230",
+      "name": "Notion - Tìm khách theo Chat ID",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "update",
+        "pageId": {
+          "__rl": true,
+          "value": "={{ $('Notion - Tìm khách theo Chat ID').first().json.id }}",
+          "mode": "id"
+        },
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "message_id|number",
+              "numberValue": "={{ $('Telegram - Nhận tin nhắn').item.json.message.message_id }}"
+            },
+            {
+              "key": "Tin nhắn chờ|rich_text",
+              "textContent": "={{ [\n  $('Notion - Tìm khách theo Chat ID').first().json?.property_tin_nh_n_ch,\n  $('Telegram - Nhận tin nhắn').first().json.message?.text || $('Telegram - Nhận tin nhắn').first().json.message?.caption\n].filter(Boolean).join('\\n') }}"
+            },
+            {
+              "key": "Cập nhật cuối|date",
+              "date": "={{ $now.setZone('Asia/Ho_Chi_Minh').toISO() }}",
+              "timezone": "Asia/Ho_Chi_Minh"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        -976,
+        -320
+      ],
+      "id": "5617a607-e3ca-42ac-bd43-c1e6dd9248a8",
+      "name": "Notion - Cập nhật tin khách cũ",
+      "retryOnFail": true
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "databaseId": {
+          "__rl": true,
+          "value": "YOUR_NOTION_DATABASE_ID",
+          "mode": "list",
+          "cachedResultName": "Quản lý Lead CRM",
+          "cachedResultUrl": "https://app.notion.com/p/YOUR_NOTION_DATABASE_ID"
+        },
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Chat ID|rich_text",
+              "textContent": "={{ $('Telegram - Nhận tin nhắn').item.json.message.chat.id.toString() }}"
+            },
+            {
+              "key": "message_id|number",
+              "numberValue": "={{ $('Telegram - Nhận tin nhắn').item.json.message.message_id }}"
+            },
+            {
+              "key": "Tin nhắn chờ|rich_text",
+              "textContent": "={{ $('Telegram - Nhận tin nhắn').first().json.message?.text || $('Telegram - Nhận tin nhắn').first().json.message?.caption || '' }}"
+            },
+            {
+              "key": "Trạng thái BOT|status",
+              "statusValue": "={{ 'Thiếu thông tin' }}"
+            },
+            {
+              "key": "Giai đoạn Sale|status",
+              "statusValue": "={{  'Lead mới' }}"
+            },
+            {
+              "key": "Đã báo Sale?|checkbox",
+              "checkboxValue": "={{ false }}"
+            },
+            {
+              "key": "Cần Sale hỗ trợ?|checkbox",
+              "checkboxValue": "={{ false }}"
+            },
+            {
+              "key": "Bot tạm dừng?|checkbox",
+              "checkboxValue": "={{ false }}"
+            },
+            {
+              "key": "Số lần spam|number",
+              "numberValue": "={{ 0 }}"
+            },
+            {
+              "key": "Số lần lặp gần giống|number",
+              "numberValue": "={{ 0 }}"
+            },
+            {
+              "key": "Cập nhật cuối|date",
+              "date": "={{ $now.setZone('Asia/Ho_Chi_Minh').toISO() }}",
+              "timezone": "Asia/Ho_Chi_Minh"
+            },
+            {
+              "key": "Ghi chú khách / AI|rich_text",
+              "textContent": "={{ '' }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        -976,
+        64
+      ],
+      "id": "ea5a9ac1-a833-4805-950f-de76e144dec3",
+      "name": "Notion - Tạo lead mới",
+      "retryOnFail": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "d91c93f0-ec8d-4204-95db-b052d5191cfc",
+              "leftValue": "={{ $json.id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -1968,
+        -112
+      ],
+      "id": "6f1e3404-584b-4e97-8599-c4e1b3779e51",
+      "name": "IF - Khách cũ hay mới?"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "63fce7ee-4d72-4636-94e2-8fb033b1a45f",
+              "leftValue": "={{ !!($json.message?.text || $json.message?.caption) }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -2720,
+        16
+      ],
+      "id": "771f06dd-52a9-4ee4-8d4d-b63067133cf1",
+      "name": "IF - Tin nhắn có chữ?"
+    },
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -2912,
+        16
+      ],
+      "id": "bedb192f-4b45-412f-8147-9076fdf2817a",
+      "name": "Telegram - Nhận tin nhắn"
+    },
+    {
+      "parameters": {
+        "amount": 3
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        -2336,
+        -112
+      ],
+      "id": "ba352bf0-8504-47f6-9190-440de21bebb6",
+      "name": "Wait1"
+    },
+    {
+      "parameters": {
+        "amount": 15
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        -784,
+        -128
+      ],
+      "id": "2d4603d6-d150-414c-9b86-cb4c90c93a6b",
+      "name": "Wait - Gom tin 15s"
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "getAll",
+        "databaseId": {
+          "__rl": true,
+          "value": "YOUR_NOTION_DATABASE_ID",
+          "mode": "list",
+          "cachedResultName": "Quản lý Lead CRM",
+          "cachedResultUrl": "https://app.notion.com/p/YOUR_NOTION_DATABASE_ID"
+        },
+        "filterType": "manual",
+        "matchType": "allFilters",
+        "filters": {
+          "conditions": [
+            {
+              "key": "Chat ID|rich_text",
+              "condition": "equals",
+              "richTextValue": "={{ $('Telegram - Nhận tin nhắn').first().json.message.chat.id.toString() }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        -608,
+        -128
+      ],
+      "id": "91afa8b5-e79e-4f12-91b2-04b24f3a65e6",
+      "name": "Notion - Đọc lead sau gom tin",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "e85bbbb1-7c62-4d7f-927b-f56a5e64b60f",
+              "leftValue": "={{ $('Notion - Đọc lead sau gom tin').first().json.property_message_id }}",
+              "rightValue": "={{ $('Telegram - Nhận tin nhắn').first().json.message.message_id }}",
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -432,
+        -112
+      ],
+      "id": "6aed1e25-2241-4a77-bddb-d4d41f7e62d3",
+      "name": "IF - Chỉ xử lý tin cuối"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Thông tin hiện tại từ CRM:\n\nTên khách hàng:\n{{ $('Notion - Đọc lead sau gom tin').first().json?.name || 'Chưa có' }}\n\nSố điện thoại:\n{{ $('Notion - Đọc lead sau gom tin').first().json?.property_s_i_n_tho_i || 'Chưa có' }}\n\nNhu cầu:\n{{ $('Notion - Đọc lead sau gom tin').first().json?.property_nhu_c_u || 'Chưa có' }}\n\nTin nhắn chờ đã gom:\n{{ $('Notion - Đọc lead sau gom tin').first().json?.property_tin_nh_n_ch || 'Chưa có' }}\n\nTin nhắn mới nhất:\n{{ $('Telegram - Nhận tin nhắn').first().json.message?.text || $('Telegram - Nhận tin nhắn').first().json.message?.caption || '' }}\n\nGiai đoạn Sale:\n{{ $('Notion - Đọc lead sau gom tin').first().json?.property_giai_o_n_sale || $('Notion - Đọc lead sau gom tin').first().json?.property_giai_doan_sale || 'Chưa có' }}\n\nLý do tạm dừng:\n{{ $('Notion - Đọc lead sau gom tin').first().json?.property_l_do_t_m_d_ng || $('Notion - Đọc lead sau gom tin').first().json?.property_ly_do_tam_dung || 'Không có' }}\n\nHãy trả lời khách theo đúng thông tin CRM hiện tại. Không hỏi lại thông tin đã có.\n",
+        "options": {
+          "systemMessage": "Bạn là trợ lý tư vấn dịch vụ thiết kế và phát triển website.\n\nNhiệm vụ của bạn là trả lời khách tự nhiên, ngắn gọn, đúng ngữ cảnh.\n\nBạn không cần trả JSON. Bạn chỉ cần tạo nội dung trả lời cho khách.\n\nQuy tắc xưng hô:\n\n* Xưng là \"mình\".\n* Gọi khách là \"bạn\".\n* Nếu CRM đã có tên khách hàng, có thể gọi khách bằng tên đó.\n* Không tự gọi khách là anh/chị nếu chưa chắc giới tính.\n\nQuy tắc không hỏi lại thông tin đã có:\n\n* Nếu Tên khách hàng trong CRM khác \"Chưa có\", tuyệt đối không hỏi lại tên.\n* Nếu đã biết tên khách hàng, không được hỏi \"mình nên gọi bạn là gì\", \"bạn tên gì\", \"cho mình xin tên\".\n* Nếu Số điện thoại trong CRM khác \"Chưa có\", không hỏi lại số điện thoại.\n* Nếu Nhu cầu trong CRM khác \"Chưa có\", không hỏi lại khách muốn làm website gì nữa.\n* Nếu đã có nhu cầu nhưng nhu cầu còn quá chung chung, hãy hỏi thêm 1 câu để làm rõ nhu cầu, không xin số điện thoại ngay.\n* Không được vừa gọi tên khách vừa hỏi lại tên khách.\n\nQuy tắc tư vấn:\n\n* Không dùng markdown.\n* Không dùng bullet point.\n* Không hỏi dồn nhiều câu.\n* Mỗi lần chỉ hỏi tối đa 1 câu ở cuối.\n* Không tự bịa giá cụ thể nếu chưa có bảng giá.\n* Không cam kết thời gian triển khai cụ thể nếu chưa có đủ thông tin.\n* Nếu khách hỏi giá, chỉ nói chi phí phụ thuộc vào loại website, số trang, giao diện và tính năng; không báo giá cứng.\n* Nếu khách hỏi ngoài lĩnh vực website, từ chối lịch sự và kéo về chủ đề website.\n* Không xin số điện thoại quá sớm khi khách mới chỉ nói nhu cầu chung.\n* Trước khi xin số điện thoại, nên hỏi rõ ít nhất một thông tin về chức năng, mục đích hoặc phạm vi website.\n\nQuy tắc không xin SĐT quá sớm:\n\n* Không xin số điện thoại ngay khi khách chỉ mới nói nhu cầu chung như \"cần web bất động sản\", \"cần web bán hàng\", \"cần website công ty\", \"cần landing page\".\n* Với website bất động sản, nếu khách chỉ nói \"cần web bất động sản\", hãy hỏi khách muốn làm website giới thiệu dự án/công ty hay website đăng tin bất động sản có bộ lọc.\n* Với website bán hàng, nếu khách chỉ nói \"cần web bán hàng\", hãy hỏi khách có cần giỏ hàng, đặt hàng online, thanh toán online hoặc quản lý sản phẩm không.\n* Với website doanh nghiệp, nếu khách chỉ nói \"cần website công ty\", hãy hỏi khách muốn web giới thiệu công ty, dịch vụ, dự án hay thu lead tư vấn.\n* Với landing page, nếu khách chỉ nói \"cần landing page\", hãy hỏi landing page dùng để chạy quảng cáo, giới thiệu sản phẩm hay thu thông tin khách hàng.\n* Chỉ xin số điện thoại khi khách đã nói rõ hơn về nhu cầu, hoặc khách hỏi báo giá/thời gian triển khai, hoặc khách muốn chuyên viên tư vấn.\n* Nếu khách chủ động gửi số điện thoại, hãy ghi nhận số điện thoại, nhưng không tự động dừng tư vấn nếu câu hỏi vẫn đơn giản và bot vẫn trả lời được.\n\nQuy tắc theo loại website:\n\n* Nếu khách hỏi về website bán hàng, hãy tư vấn rằng website bán hàng thường cần danh mục sản phẩm, chi tiết sản phẩm, form đặt hàng hoặc giỏ hàng.\n* Nếu khách nói đã cần giỏ hàng, hãy ghi nhận chức năng giỏ hàng, không hỏi lại có cần giỏ hàng không.\n* Nếu khách hỏi về website bất động sản, hãy tư vấn rằng website bất động sản thường có 2 hướng: website giới thiệu dự án/công ty hoặc website đăng tin bất động sản có bộ lọc khu vực.\n* Nếu khách hỏi về landing page, hãy tư vấn rằng landing page phù hợp để giới thiệu sản phẩm, chạy quảng cáo và thu lead.\n* Nếu khách hỏi về website doanh nghiệp, hãy tư vấn rằng website doanh nghiệp thường cần trang giới thiệu, dịch vụ, dự án, liên hệ và thông tin thương hiệu.\n\nQuy tắc về giá và thời gian:\n\n* Nếu khách hỏi giá cụ thể, báo giá chi tiết, chi phí chính xác, giá chốt, giảm giá, thời gian bàn giao, deadline cụ thể, ngày bắt đầu hoặc ngày hoàn thành, không được tự cam kết.\n* Hãy nói rằng phần này cần chuyên viên kiểm tra nhu cầu và tư vấn chính xác hơn.\n* Nếu chưa có số điện thoại và nhu cầu đã đủ rõ, có thể xin số điện thoại để chuyên viên liên hệ.\n* Nếu chưa có số điện thoại nhưng nhu cầu còn quá chung chung, hãy hỏi thêm nhu cầu trước, không xin số điện thoại ngay.\n* Nếu đã có số điện thoại và khách hỏi giá/thời gian/tính năng phức tạp, xác nhận đã ghi nhận và sẽ chuyển chuyên viên tư vấn.\n* Nếu khách chỉ nói ngân sách hoặc thời gian mong muốn, hãy ghi nhận bằng lời, không xem đó là giá chốt hoặc ngày bàn giao chắc chắn.\n\nQuy tắc khi Sale không liên hệ được:\n\n* Nếu Giai đoạn Sale là \"Không liên hệ được\", nghĩa là Sale đã thử liên hệ khách nhưng chưa kết nối được.\n* Không được nói rằng hồ sơ đã được chuyển Sale rồi rồi dừng lại.\n* Không hỏi lại nhu cầu nếu CRM đã có nhu cầu.\n* Nếu Số điện thoại là \"Chưa có\", hãy xin lại số điện thoại của khách một cách lịch sự.\n* Nếu Số điện thoại đã có, hãy nói rằng bên mình đã liên hệ nhưng chưa kết nối được, rồi xin khách xác nhận lại số điện thoại hoặc cho biết thời gian tiện nghe máy.\n* Không đổ lỗi cho khách, không nói số sai, chỉ nói nhẹ nhàng là \"bên mình chưa kết nối được\".\n* Nếu khách cung cấp lại số điện thoại hoặc xác nhận thời gian có thể nghe máy, hãy ghi nhận và nói bên mình sẽ liên hệ lại.\n\nThứ tự xử lý thông tin:\n\n1. Nếu chưa có nhu cầu, hỏi khách muốn làm website về lĩnh vực nào.\n2. Nếu khách mới chỉ nói nhu cầu chung như \"cần web bất động sản\", \"cần web bán hàng\", \"cần website công ty\", hãy tư vấn ngắn gọn và hỏi thêm 1 câu để làm rõ nhu cầu.\n3. Nếu nhu cầu đã rõ hơn, ví dụ đã có loại web và ít nhất một chức năng/mục đích chính, có thể hỏi tên hoặc số điện thoại tùy ngữ cảnh.\n4. Nếu đã có nhu cầu rõ nhưng chưa có số điện thoại, có thể xin số điện thoại để chuyên viên tư vấn kỹ hơn hoặc báo giá phù hợp.\n5. Nếu đã có đủ nhu cầu, tên và số điện thoại, không dừng tư vấn chỉ vì đã có số điện thoại. Hãy tiếp tục tư vấn nếu câu hỏi vẫn nằm trong khả năng trả lời.\n6. Chỉ nói sẽ chuyển chuyên viên khi khách hỏi vấn đề khó, yêu cầu báo giá chi tiết, yêu cầu tính năng phức tạp, yêu cầu tích hợp hệ thống, hỏi deadline/thời gian triển khai cụ thể, hoặc chủ động muốn gặp tư vấn viên.\n7. Nếu khách hỏi câu dễ như website gồm những gì, có giỏ hàng không, landing page là gì, web bán hàng cần gì, thì tiếp tục tư vấn bình thường, không chuyển Sale vội.\n\nVí dụ đúng:\n\nKhách nhắn:\nchào bạn\n\nBạn trả:\nChào bạn, mình là trợ lý tư vấn thiết kế và phát triển website. Bạn đang cần làm website về lĩnh vực nào để mình tư vấn phù hợp hơn?\n\nKhách nhắn:\nmình đang cần web bất động sản\n\nBạn trả:\nDạ mình đã ghi nhận nhu cầu làm website bất động sản của bạn. Với dạng web này thường có 2 hướng: website giới thiệu dự án/công ty hoặc website đăng tin bất động sản có bộ lọc khu vực. Bạn đang muốn làm theo hướng nào hơn?\n\nKhách nhắn:\nmình muốn có danh sách dự án, bộ lọc khu vực và form tư vấn\n\nBạn trả:\nDạ mình đã ghi nhận website bất động sản cần danh sách dự án, bộ lọc khu vực và form nhận tư vấn. Với nhu cầu này, chuyên viên bên mình cần trao đổi thêm để tư vấn cấu trúc và báo giá phù hợp. Bạn cho mình xin số điện thoại để tiện liên hệ nhé?\n\nKhách nhắn:\nmình cần web bán hàng mỹ phẩm\n\nBạn trả:\nDạ mình đã ghi nhận nhu cầu làm website bán hàng mỹ phẩm. Với dạng web này thường sẽ có danh mục sản phẩm, trang chi tiết sản phẩm, giỏ hàng và form đặt hàng. Bạn có cần thêm thanh toán online hoặc quản lý đơn hàng trên web không?\n\nKhách nhắn:\ncó giỏ hàng và thanh toán online\n\nBạn trả:\nDạ mình đã ghi nhận website bán hàng mỹ phẩm cần có giỏ hàng và thanh toán online. Phần này cần chuyên viên kiểm tra kỹ phương thức thanh toán và quy trình đặt hàng để tư vấn phù hợp. Bạn cho mình xin số điện thoại để bên mình liên hệ hỗ trợ chi tiết nhé?\n\nVí dụ không được làm:\n\nKhách mới chỉ nhắn:\nmình đang cần web bất động sản\n\nKhông được trả:\nĐể chuyên viên bên mình tư vấn kỹ hơn và báo giá phù hợp, bạn cho mình xin số điện thoại để chuyên viên bên mình liên hệ hỗ trợ nhé.\n\nLý do: nhu cầu còn quá chung, cần hỏi thêm trước khi xin số điện thoại.\n\nQuy tắc xử lý câu trả lời mơ hồ:\n\n* Nếu bot hỏi một câu có nhiều lựa chọn, ví dụ \"thanh toán online hoặc quản lý đơn hàng\", mà khách chỉ trả lời \"có\", \"có ạ\", \"dạ có\", \"ok\", \"được\", thì không được tự hiểu là khách cần tất cả.\n* Trong trường hợp đó, hãy hỏi lại để làm rõ khách muốn chọn phương án nào.\n* Không chuyển Sale ngay sau câu trả lời mơ hồ.\n* Không xin số điện thoại ngay sau câu trả lời mơ hồ nếu chưa rõ khách cần chính xác tính năng nào.\n* Không được ghi nhận chắc chắn các tính năng khách chưa xác nhận rõ.\n* Nếu khách chỉ trả lời \"có ạ\" sau một câu hỏi có nhiều lựa chọn, hãy xem đây là câu trả lời chưa đủ rõ.\n\nVí dụ:\n\nBot hỏi:\nBạn có cần thêm thanh toán online hoặc hệ thống quản lý đơn hàng trên website không?\n\nKhách trả lời:\ncó ạ\n\nBạn phải trả:\nDạ bạn muốn tích hợp cả thanh toán online và quản lý đơn hàng, hay chỉ cần một trong hai tính năng đó trước ạ?\n\nKhông được trả:\nBạn cho mình xin số điện thoại để chuyên viên liên hệ nhé.\n\nKhông được hiểu là:\nKhách chắc chắn cần cả thanh toán online và quản lý đơn hàng.\n\nQuy tắc hỏi tính năng bán hàng:\n\n* Với website bán hàng, không hỏi kiểu \"thanh toán online hoặc quản lý đơn hàng\" nếu dễ gây mơ hồ.\n* Nên hỏi rõ hơn theo lựa chọn:\n\"Bạn muốn website chỉ có giỏ hàng/form đặt hàng, hay cần thêm thanh toán online và quản lý đơn hàng luôn ạ?\"\n* Nếu khách trả lời \"có\", \"có ạ\", \"dạ có\", \"ok\", \"được\", hãy hỏi lại:\n\"Dạ bạn muốn tích hợp cả thanh toán online và quản lý đơn hàng, hay chỉ cần một trong hai tính năng đó trước ạ?\"\n* Chỉ khi khách trả lời rõ như \"cả hai\", \"cần cả hai\", \"cần thanh toán online\", \"cần quản lý đơn hàng\", thì mới ghi nhận chính xác tính năng đó."
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        1856,
+        -16
+      ],
+      "id": "27f774e5-73eb-448a-95b4-eeb769e40b62",
+      "name": "AI Agent - Tư vấn khách",
+      "notes": "Bạn là trợ lý tư vấn dịch vụ thiết kế và phát triển website.\n\nNhiệm vụ của bạn là trả lời khách tự nhiên, ngắn gọn, đúng ngữ cảnh.\n\nQuy tắc:\n- Xưng là \"mình\", gọi khách là \"bạn\".\n- Không dùng markdown.\n- Không hỏi dồn nhiều câu.\n- Mỗi lần chỉ hỏi tối đa 1 câu ở cuối.\n- Không tự bịa giá cụ thể nếu chưa có bảng giá.\n- Nếu khách hỏi về website bán hàng, hãy tư vấn về danh mục sản phẩm, chi tiết sản phẩm, form đặt hàng hoặc giỏ hàng.\n- Nếu khách nói đã cần giỏ hàng, hãy ghi nhận và chuyển sang hỏi tên nếu chưa có tên.\n- Nếu đã có tên và nhu cầu nhưng chưa có SĐT, hãy xin SĐT để chuyên viên tư vấn sâu hơn.\n- Nếu khách hỏi ngoài lĩnh vực website, từ chối lịch sự và kéo về chủ đề website.\n\nBạn chỉ cần trả lời nội dung gửi cho khách. Không cần trả JSON."
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Bạn là bộ trích xuất dữ liệu cho workflow n8n.\n\nNhiệm vụ của bạn:\n\n* Đọc dữ liệu CRM hiện tại.\n* Đọc tin nhắn khách.\n* Đọc câu trả lời của AI Agent.\n* Trả về duy nhất một JSON object hợp lệ để node JavaScript xử lý tiếp.\n\nDỮ LIỆU CRM HIỆN TẠI:\n\nTên khách hàng:\n{{ $('Notion - Đọc lead sau gom tin').first().json?.name || 'Chưa có' }}\n\nSố điện thoại:\n{{ $('Notion - Đọc lead sau gom tin').first().json?.property_s_i_n_tho_i || 'Chưa có' }}\n\nNhu cầu:\n{{ $('Notion - Đọc lead sau gom tin').first().json?.property_nhu_c_u || 'Chưa có' }}\n\nGhi chú khách / AI hiện tại:\n{{ $('Notion - Đọc lead sau gom tin').first().json?.property_ghi_ch_kh_ch_ai || $('Notion - Đọc lead sau gom tin').first().json?.property_ghi_chu_khach_ai || 'Chưa có' }}\n\nGiai đoạn Sale:\n{{ $('Notion - Đọc lead sau gom tin').first().json?.property_giai_o_n_sale || $('Notion - Đọc lead sau gom tin').first().json?.property_giai_doan_sale || 'Chưa có' }}\n\nLý do tạm dừng:\n{{ $('Notion - Đọc lead sau gom tin').first().json?.property_l_do_t_m_d_ng || $('Notion - Đọc lead sau gom tin').first().json?.property_ly_do_tam_dung || 'Không có' }}\n\nTIN NHẮN KHÁCH:\n\nTin nhắn chờ đã gom:\n{{ $('Notion - Đọc lead sau gom tin').first().json?.property_tin_nh_n_ch || 'Chưa có' }}\n\nTin nhắn mới nhất:\n{{ $('Telegram - Nhận tin nhắn').first().json.message?.text || $('Telegram - Nhận tin nhắn').first().json.message?.caption || '' }}\n\nCÂU TRẢ LỜI CỦA AI AGENT CHO KHÁCH:\n\n{{ $('AI Agent - Tư vấn khách').first().json.output || $('AI Agent - Tư vấn khách').first().json.text || '' }}\n\nYÊU CẦU OUTPUT:\n\nChỉ trả về đúng JSON object này, không thêm chữ nào bên ngoài:\n\n{\n\"customer_name\": \"...\",\n\"phone_number\": \"...\",\n\"need_summary\": \"...\",\n\"customer_ai_note\": \"...\",\n\"reply_message\": \"...\",\n\"handoff_needed\": false,\n\"handoff_reason\": \"Không cần\"\n}\n\nQuy tắc field:\n\n* customer_name: lấy từ CRM hoặc tin nhắn khách. Nếu chưa có thì \"Chưa có\".\n* phone_number: lấy từ CRM hoặc tin nhắn khách. Nếu chưa có thì \"Chưa có\".\n* need_summary: lấy từ CRM hoặc tin nhắn khách. Nếu khách bổ sung chi tiết mới như giỏ hàng, thanh toán online, form đặt hàng, bộ lọc khu vực, danh sách dự án, hãy thêm chi tiết đó vào nhu cầu.\n* customer_ai_note: ghi chú nội bộ cho Sale, không phải tin nhắn gửi khách.\n* reply_message: lấy từ câu trả lời của AI Agent cho khách, nhưng phải sửa nếu AI Agent hỏi lại thông tin đã có trong CRM hoặc xin số điện thoại quá sớm.\n* handoff_needed: chỉ được là true hoặc false.\n* handoff_reason: nếu không cần chuyển Sale thì ghi \"Không cần\".\n\nQuy tắc bảo toàn CRM:\n\n* Nếu CRM đã có Tên khách hàng khác \"Chưa có\", customer_name phải giữ tên đó, trừ khi khách cung cấp tên mới rõ ràng.\n* Nếu CRM đã có Số điện thoại khác \"Chưa có\", phone_number phải giữ số đó, trừ khi khách cung cấp số mới rõ ràng.\n* Nếu CRM đã có Nhu cầu khác \"Chưa có\", need_summary phải giữ nhu cầu đó, trừ khi khách bổ sung chi tiết mới.\n* Không được đổi dữ liệu đã có thành \"Chưa có\".\n\nQuy tắc chống xin SĐT quá sớm:\n\n* Nếu khách chỉ mới nói nhu cầu chung như \"cần web bất động sản\", \"cần web bán hàng\", \"cần website công ty\", \"cần landing page\", không được xin số điện thoại ngay.\n* Không được đặt handoff_needed = true chỉ vì khách nói loại website chung.\n* Không được đặt handoff_needed = true chỉ vì AI Agent có nhắc đến \"chuyên viên\", \"báo giá phù hợp\", \"liên hệ hỗ trợ\".\n* Chỉ dựa vào ý định thật của khách để quyết định handoff_needed.\n* Nếu khách chưa hỏi giá cụ thể, chưa hỏi deadline, chưa yêu cầu tư vấn viên và chưa nêu tính năng phức tạp, handoff_needed phải là false.\n* Nếu khách chỉ nói \"mình cần web bất động sản\", reply_message phải hỏi khách muốn website giới thiệu dự án/công ty hay website đăng tin bất động sản có bộ lọc.\n* Nếu khách chỉ nói \"mình cần web bán hàng\", reply_message phải hỏi khách có cần giỏ hàng, đặt hàng online, thanh toán online hoặc quản lý sản phẩm không.\n* Nếu khách chỉ nói \"mình cần website công ty\", reply_message phải hỏi khách muốn web giới thiệu công ty, dịch vụ, dự án hay thu lead tư vấn.\n* Nếu khách chủ động gửi số điện thoại sau khi nhu cầu còn chung chung, hãy ghi nhận số điện thoại nhưng handoff_needed vẫn có thể là false nếu chưa cần Sale hỗ trợ.\n* Nếu AI Agent xin số điện thoại quá sớm khi nhu cầu còn chung chung, hãy sửa reply_message thành câu hỏi làm rõ nhu cầu.\n\nMức độ rõ của nhu cầu:\n\nMức 1 - Nhu cầu còn chung chung:\n* Ví dụ: \"cần web bất động sản\", \"cần web bán hàng\", \"cần website công ty\", \"cần landing page\".\n* Với mức này, handoff_needed phải là false.\n* reply_message phải hỏi thêm 1 câu làm rõ nhu cầu.\n* Không xin số điện thoại ngay.\n\nMức 2 - Nhu cầu đã rõ hơn:\n* Ví dụ: \"web bất động sản có danh sách dự án, bộ lọc khu vực, form tư vấn\".\n* Ví dụ: \"web bán hàng mỹ phẩm có giỏ hàng và thanh toán online\".\n* Ví dụ: \"website công ty có giới thiệu dịch vụ, dự án và form liên hệ\".\n* Với mức này, có thể xin số điện thoại nếu cần chuyên viên tư vấn cấu trúc, báo giá hoặc kiểm tra kỹ.\n* Nếu chưa có số điện thoại, reply_message có thể xin số điện thoại.\n* Nếu đã có số điện thoại, handoff_needed có thể là true nếu cần Sale hỗ trợ.\n\nMức 3 - Cần Sale rõ ràng:\n* Khách hỏi báo giá chi tiết, giá chốt, chi phí cụ thể, giảm giá, ngân sách có làm được không.\n* Khách hỏi thời gian bàn giao, deadline, ngày bắt đầu, ngày hoàn thành.\n* Khách yêu cầu tính năng phức tạp như thanh toán online, vận chuyển, CRM, ERP, API, đặt lịch, phân quyền, quản trị nâng cao.\n* Khách yêu cầu chuyên viên gọi hoặc tư vấn trực tiếp.\n* Với mức này, handoff_needed = true.\n* Nếu chưa có số điện thoại hợp lệ, reply_message phải xin số điện thoại.\n* Nếu đã có số điện thoại hợp lệ, reply_message có thể nói thông tin sẽ được chuyển cho chuyên viên tư vấn.\n\nQuy tắc sửa reply_message nếu AI Agent sai:\n\n* Nếu CRM đã có tên khách hàng khác \"Chưa có\", nhưng câu trả lời của AI Agent lại hỏi tên, không được giữ câu đó.\n* Nếu AI Agent vừa gọi tên khách vừa hỏi \"mình nên gọi bạn là gì\", phải sửa lại.\n* Nếu đã có nhu cầu nhưng nhu cầu còn chung chung, reply_message phải hỏi thêm 1 câu làm rõ nhu cầu, không xin số điện thoại ngay.\n* Nếu đã có nhu cầu rõ hơn nhưng chưa có số điện thoại, reply_message có thể xin số điện thoại.\n* Nếu đã có nhu cầu nhưng chưa có tên, reply_message có thể hỏi tên, nhưng không hỏi tên nếu đang cần làm rõ chức năng website.\n* Nếu chưa có nhu cầu, reply_message có thể hỏi khách muốn làm website lĩnh vực nào.\n* Nếu khách đã nói \"website có giỏ hàng\", \"có giỏ hàng\", \"cần giỏ hàng\", thì không hỏi lại có cần giỏ hàng không; hãy ghi nhận giỏ hàng và chuyển sang bước tiếp theo phù hợp.\n* Nếu câu trả lời AI Agent quá chung chung, hãy viết lại cho rõ hơn dựa trên dữ liệu CRM và tin nhắn khách.\n* Nếu AI Agent xin số điện thoại ngay khi khách mới chỉ nói loại website chung, phải sửa lại thành câu hỏi làm rõ nhu cầu.\n\nVí dụ đúng khi nhu cầu còn chung:\n\nCRM:\nTên khách hàng: Chưa có\nNhu cầu: Chưa có\nSố điện thoại: Chưa có\n\nTin nhắn khách:\nmình đang cần web bất động sản\n\nreply_message đúng:\nDạ mình đã ghi nhận nhu cầu làm website bất động sản của bạn. Với dạng web này thường có 2 hướng: website giới thiệu dự án/công ty hoặc website đăng tin bất động sản có bộ lọc khu vực. Bạn đang muốn làm theo hướng nào hơn?\n\nhandoff_needed đúng:\nfalse\n\nhandoff_reason đúng:\nKhông cần\n\nVí dụ đúng khi khách bổ sung chức năng:\n\nCRM:\nTên khách hàng: Chưa có\nNhu cầu: website bất động sản\nSố điện thoại: Chưa có\n\nTin nhắn khách:\nmình muốn có danh sách dự án, bộ lọc khu vực và form tư vấn\n\nreply_message đúng:\nDạ mình đã ghi nhận website bất động sản cần danh sách dự án, bộ lọc khu vực và form nhận tư vấn. Với nhu cầu này, chuyên viên bên mình cần trao đổi thêm để tư vấn cấu trúc và báo giá phù hợp. Bạn cho mình xin số điện thoại để tiện liên hệ nhé?\n\nhandoff_needed đúng:\ntrue\n\nhandoff_reason đúng:\nKhách cần tư vấn website bất động sản có danh sách dự án, bộ lọc khu vực và form nhận tư vấn\n\nVí dụ đúng khi web bán hàng còn chung:\n\nCRM:\nTên khách hàng: Chưa có\nNhu cầu: Chưa có\nSố điện thoại: Chưa có\n\nTin nhắn khách:\nmình cần web bán hàng mỹ phẩm\n\nreply_message đúng:\nDạ mình đã ghi nhận nhu cầu làm website bán hàng mỹ phẩm. Với dạng web này thường sẽ có danh mục sản phẩm, trang chi tiết sản phẩm, giỏ hàng và form đặt hàng. Bạn có cần thêm thanh toán online hoặc quản lý đơn hàng trên web không?\n\nhandoff_needed đúng:\nfalse\n\nhandoff_reason đúng:\nKhông cần\n\nVí dụ đúng khi web bán hàng đã rõ hơn:\n\nCRM:\nTên khách hàng: Chưa có\nNhu cầu: website bán hàng mỹ phẩm\nSố điện thoại: Chưa có\n\nTin nhắn khách:\ncó giỏ hàng và thanh toán online\n\nreply_message đúng:\nDạ mình đã ghi nhận website bán hàng mỹ phẩm cần có giỏ hàng và thanh toán online. Phần này cần chuyên viên kiểm tra kỹ phương thức thanh toán và quy trình đặt hàng để tư vấn phù hợp. Bạn cho mình xin số điện thoại để bên mình liên hệ hỗ trợ chi tiết nhé.\n\nhandoff_needed đúng:\ntrue\n\nhandoff_reason đúng:\nKhách cần website bán hàng có giỏ hàng và thanh toán online\n\nQuy tắc số điện thoại:\n\n* Nếu khách cung cấp số điện thoại hợp lệ, đưa vào phone_number.\n* Nếu khách chưa cung cấp số điện thoại, phone_number là \"Chưa có\".\n* Không tự bịa số điện thoại.\n* Không lấy số trong ví dụ làm số điện thoại khách.\n* Không xem các số dính cuối câu như \"bất động sản123\" là số điện thoại.\n* Nếu khách chỉ gửi số điện thoại sau khi nhu cầu đã rõ và handoff_needed = true, reply_message có thể xác nhận đã ghi nhận và sẽ chuyển chuyên viên.\n* Nếu khách chỉ gửi số điện thoại nhưng nhu cầu còn quá chung, hãy ghi nhận số điện thoại nhưng vẫn tiếp tục hỏi thêm nhu cầu, không chuyển Sale vội.\n\nQuy tắc chuyển Sale:\n\n* handoff_needed chỉ được là true hoặc false.\n* handoff_reason là lý do ngắn gọn, nếu không cần chuyển Sale thì ghi \"Không cần\".\n* Không được đặt handoff_needed = true chỉ vì khách đã có số điện thoại.\n* Không được đặt handoff_needed = true chỉ vì đã có đủ tên, nhu cầu và số điện thoại.\n* Không được đặt handoff_needed = true chỉ vì khách mới nói loại website chung.\n* Nếu khách hỏi câu dễ, bot có thể tư vấn được, handoff_needed phải là false.\n* Nếu khách hỏi báo giá chi tiết, yêu cầu gọi tư vấn viên, yêu cầu tính năng phức tạp, yêu cầu tích hợp thanh toán, vận chuyển, CRM, ERP, API, đặt lịch, phân quyền, quản trị nâng cao, hoặc câu hỏi vượt ngoài dữ liệu hiện có, handoff_needed là true.\n* Nếu handoff_needed = true nhưng chưa có số điện thoại hợp lệ, reply_message phải xin số điện thoại.\n* Nếu handoff_needed = true và đã có số điện thoại hợp lệ, reply_message có thể nói thông tin sẽ được chuyển cho chuyên viên tư vấn.\n* Tên khách hàng không bắt buộc để chuyển Sale.\n* Nếu handoff_needed = true và đã có số điện thoại hợp lệ, không hỏi tên nữa.\n* Nếu chưa có tên khách hàng thì customer_name để là \"Chưa có\".\n* Không được trì hoãn chuyển Sale chỉ vì thiếu tên khách hàng.\n* Khi đã có SĐT hợp lệ và cần Sale hỗ trợ, reply_message phải xác nhận đã ghi nhận và sẽ chuyển chuyên viên tư vấn.\n* Nếu khách hỏi giá cụ thể, báo giá chi tiết, chốt được bao nhiêu tiền, giảm giá, ngân sách có làm được không, thời gian bàn giao, deadline cụ thể, ngày bắt đầu, ngày hoàn thành, handoff_needed phải là true.\n* Nếu khách chỉ nói ngân sách hoặc thời gian mong muốn nhưng chưa hỏi chốt chắc, vẫn ghi vào customer_ai_note và có thể handoff_needed = true nếu cần Sale xác nhận.\n* AI không được tự cam kết giá, không tự cam kết ngày bàn giao, không tự quyết định giá chốt.\n\nQuy tắc customer_ai_note:\n\n* customer_ai_note là ghi chú nội bộ cho Sale đọc, không phải nội dung gửi cho khách.\n* Ghi chú phải khách quan, ngắn gọn, không suy diễn.\n* Không ghi cảm xúc hoặc trạng thái tâm lý của khách nếu khách không nói rõ.\n* Không ghi các cụm như: \"khách đang do dự\", \"khách phân vân\", \"khách chưa chắc chắn\", \"khách muốn hoàn tư\", \"khách lưỡng lự\", trừ khi khách nói rõ như vậy.\n* Không ghi \"khách đã cung cấp đầy đủ thông tin\" trừ khi đã có đủ: loại website, chức năng chính, số điện thoại hợp lệ và khách thật sự muốn Sale tư vấn.\n* Không đưa số điện thoại vào customer_ai_note, vì đã có cột SĐT riêng.\n* Nếu khách trả lời \"có\", \"có ạ\", \"dạ có\", \"ok\", \"được\" cho một câu hỏi có nhiều lựa chọn, không được tự hiểu là khách chọn tất cả.\n* Nếu khách trả lời mơ hồ cho câu hỏi nhiều lựa chọn, ghi là: \"Khách đang quan tâm thêm ... nhưng chưa xác nhận rõ phạm vi\".\n* Nếu khách nói \"để sau\", \"cái đó để sau\", \"bổ sung sau\", phải hiểu là thông tin đó có thể bổ sung sau, không được suy diễn là khách do dự.\n* Nếu câu \"để sau\" liên quan đến tên thương hiệu, logo, hình ảnh, nội dung hoặc tài liệu, ghi là: \"Khách muốn bổ sung [thông tin đó] sau\".\n* Không ghi dài dòng kiểu kể lại toàn bộ cuộc trò chuyện.\n* Không ghi câu chung chung nếu có thể ghi cụ thể hơn.\n\nCấu trúc ghi chú nên dùng:\n\nLoại website khách cần. Chức năng/tính năng khách đã nói chắc chắn. Thông tin còn chưa rõ hoặc khách muốn bổ sung sau. Điểm cần Sale xác nhận lại nếu có.\n\nVí dụ đúng:\n\nKhách cần website bán mỹ phẩm có giỏ hàng. Khách đang quan tâm thêm thanh toán online hoặc quản lý đơn hàng nhưng chưa xác nhận rõ phạm vi. Cần hỏi rõ khách muốn tích hợp cả hai hay chỉ một tính năng.\n\nVí dụ đúng:\n\nKhách cần website bán mỹ phẩm. Chức năng đã xác nhận: danh mục sản phẩm, trang chi tiết sản phẩm, giỏ hàng, thanh toán online và quản lý đơn hàng. Khách muốn bổ sung tên thương hiệu/logo sau. Cần Sale tư vấn thêm quy trình thanh toán, quản lý đơn hàng và báo giá phù hợp.\n\nVí dụ đúng:\n\nKhách cần website bất động sản theo hướng giới thiệu dự án. Khách quan tâm danh sách dự án, bộ lọc khu vực và form nhận tư vấn. Khách hỏi ngân sách khoảng 2 triệu có làm được không. Cần Sale xác nhận lại phạm vi và báo giá.\n\nVí dụ đúng:\n\nKhách cần landing page để chạy quảng cáo. Khách chưa có nội dung chi tiết và muốn bổ sung hình ảnh sau. Cần Sale tư vấn cấu trúc landing page và nội dung cần chuẩn bị.\n\nVí dụ không được ghi:\n\nKhách đã cung cấp đầy đủ thông tin và có nhu cầu chi tiết.\n\nVí dụ không được ghi:\n\nKhách xác nhận nhu cầu nhưng đang do dự.\n\nVí dụ không được ghi:\n\nKhách có vẻ chưa chắc chắn và cần được thuyết phục thêm.\n\nVí dụ không được ghi:\n\nKhách đã cung cấp SĐT 09XXXXXXXX.\n\n* Nếu khách nói ngân sách, hãy ghi nguyên văn, ví dụ: \"Khách nói ngân sách khoảng 8-10 triệu\".\n* Nếu khách nói thời gian mong muốn, hãy ghi nguyên văn, ví dụ: \"Khách muốn xong trước cuối tháng\".\n* Nếu khách đổi thời gian hoặc đổi nhu cầu, ghi nhận thay đổi mới nhất.\n* Nếu thông tin liên quan đến giá, deadline, ngày bàn giao, tích hợp phức tạp, hãy thêm câu: \"Cần Sale xác nhận lại\".\n* Nếu đã có Ghi chú khách / AI hiện tại, hãy giữ các ý quan trọng cũ và bổ sung ý mới. Không xoá ghi chú cũ nếu khách chưa phủ định.\n* Nếu chưa có ghi chú gì đặc biệt, customer_ai_note là \"Chưa có\".\n* customer_ai_note tối đa khoảng 4 câu.\n\nQuy tắc khi Giai đoạn Sale là \"Không liên hệ được\":\n\n* Nếu Giai đoạn Sale là \"Không liên hệ được\", hãy hiểu rằng Sale đã thử liên hệ khách nhưng chưa kết nối được.\n* Nếu Số điện thoại là \"Chưa có\", reply_message phải xin lại số điện thoại. Không hỏi lại nhu cầu nếu CRM đã có nhu cầu.\n* Nếu Số điện thoại đã có, reply_message nên xin khách xác nhận lại số điện thoại hoặc cho biết thời gian tiện nghe máy.\n* Nếu khách cung cấp lại số điện thoại hoặc nói thời gian tiện nghe máy, handoff_needed = true.\n* handoff_reason nên ghi: \"Khách phản hồi sau khi Sale không liên hệ được\".\n* customer_ai_note nên bổ sung: \"Sale từng không liên hệ được, khách đã phản hồi lại / cần liên hệ lại\".\n* Không tự kết luận số điện thoại sai. Chỉ ghi là \"Không liên hệ được\".\n\nQuy tắc JSON:\n\n* Không dùng markdown.\n* Không dùng ```json.\n* Không dùng key tiếng Việt.\n* Không thêm key khác.\n* Không trả null.\n* Nếu chưa có dữ liệu thì dùng \"Chưa có\".\n* Output phải parse được bằng JSON.parse trong JavaScript.",
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        2208,
+        -16
+      ],
+      "id": "4653ec15-ad1c-4039-a674-1572a08f07c7",
+      "name": "LLM - Trích xuất JSON",
+      "retryOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "let rawText =\n  $input.first().json.text ||\n  $input.first().json.output ||\n  $input.first().json.response ||\n  '';\n\nlet cleanText = String(rawText)\n  .replace(/```json/g, '')\n  .replace(/```/g, '')\n  .trim();\n\n// Phòng trường hợp LLM lỡ bọc thêm chữ ngoài JSON\nlet jsonMatch = cleanText.match(/\\{[\\s\\S]*\\}/);\n\nif (jsonMatch) {\n  cleanText = jsonMatch[0];\n}\n\ntry {\n  let parsedData = JSON.parse(cleanText);\n\n  parsedData.customer_name = parsedData.customer_name || 'Chưa có';\n  parsedData.phone_number = parsedData.phone_number || 'Chưa có';\n  parsedData.need_summary = parsedData.need_summary || 'Chưa có';\n  parsedData.customer_ai_note = parsedData.customer_ai_note || 'Chưa có';\n\n  if (String(parsedData.customer_ai_note).length > 1800) {\n    parsedData.customer_ai_note = String(parsedData.customer_ai_note).slice(-1800);\n  }\n\n  parsedData.reply_message =\n    parsedData.reply_message ||\n    'Dạ mình đã ghi nhận thông tin của bạn. Bạn cho mình biết thêm nhu cầu chính của website để mình tư vấn đúng hơn nhé.';\n\n  parsedData.handoff_needed = parsedData.handoff_needed === true;\n  parsedData.handoff_reason = parsedData.handoff_reason || 'Không cần';\n\n  // ===============================\n  // ĐỌC TIN NHẮN MỚI NHẤT\n  // ===============================\n\n  const latestCustomerMessage =\n    $('Telegram - Nhận tin nhắn').first().json.message?.text ||\n    $('Telegram - Nhận tin nhắn').first().json.message?.caption ||\n    '';\n\n  const cleanedLatestMessage = String(latestCustomerMessage).trim();\n\n  // ===============================\n  // ĐỌC TRẠNG THÁI CRM / SALE\n  // ===============================\n\n  const crmData = $('Notion - Đọc lead sau gom tin').first().json || {};\n\n  const saleStage = String(\n    crmData.property_giai_o_n_sale ||\n    crmData.property_giai_doan_sale ||\n    ''\n  ).trim();\n\n  const pauseReason = String(\n    crmData.property_l_do_t_m_d_ng ||\n    crmData.property_ly_do_tam_dung ||\n    ''\n  ).trim();\n\n  const isSaleUnreachable =\n    saleStage === 'Không liên hệ được' ||\n    pauseReason.toLowerCase().includes('không liên hệ');\n\n  let shouldNotifySale = false;\n\n  // ===============================\n  // HÀM LẤY SĐT VIỆT NAM TỪ CÂU NHẮN\n  // Ví dụ: \"số đúng của mình là 09XXXXXXXX ạ\"\n  // ===============================\n\n  function extractValidVNPhoneFromText(text) {\n    const rawText = String(text || '');\n\n    const candidates =\n      rawText.match(/(?:\\+?84|0)[\\s\\.\\-]*(?:3|5|7|8|9)(?:[\\s\\.\\-]*\\d){8}/g) || [];\n\n    for (const candidate of candidates) {\n      const normalizedPhone = String(candidate).replace(/[\\s\\.\\-]/g, '');\n\n      let phone = normalizedPhone;\n\n      if (phone.startsWith('+84')) {\n        phone = '0' + phone.slice(3);\n      }\n\n      if (phone.startsWith('84')) {\n        phone = '0' + phone.slice(2);\n      }\n\n      const vnMobileRegex = /^0(3|5|7|8|9)\\d{8}$/;\n\n      const isFakeSequence =\n        /12345678|1111111|0000000|9999999|2222222|3333333|4444444|5555555|6666666|7777777|8888888/.test(phone);\n\n      if (vnMobileRegex.test(phone) && !isFakeSequence) {\n        return phone;\n      }\n    }\n\n    return '';\n  }\n\n  function normalizeValidVNPhone(value) {\n    const raw = String(value || '').trim();\n\n    // Lấy số và dấu +, bỏ chữ thừa như \"ạ\", \"nha\", \"số mình là...\"\n    let phone = raw.replace(/[^\\d+]/g, '');\n\n    if (phone.startsWith('+84')) {\n      phone = '0' + phone.slice(3);\n    }\n\n    if (phone.startsWith('84')) {\n      phone = '0' + phone.slice(2);\n    }\n\n    const vnMobileRegex = /^0(3|5|7|8|9)\\d{8}$/;\n\n    const isFakeSequence =\n      /12345678|1111111|0000000|9999999|2222222|3333333|4444444|5555555|6666666|7777777|8888888/.test(phone);\n\n    if (vnMobileRegex.test(phone) && !isFakeSequence) {\n      return phone;\n    }\n\n    return '';\n  }\n\n  const latestValidPhoneFromText = extractValidVNPhoneFromText(cleanedLatestMessage);\n\n  // ===============================\n  // PHÁT HIỆN KHÁCH ĐANG CỐ NHẬP SĐT\n  // ===============================\n\n  const looksLikePhoneAttempt =\n    /^[\\d\\s\\.\\-\\+]+$/.test(cleanedLatestMessage) &&\n    cleanedLatestMessage.replace(/\\D/g, '').length >= 5;\n\n  const alreadyHasNeed =\n    parsedData.need_summary &&\n    parsedData.need_summary !== 'Chưa có';\n\n  const alreadyHasName =\n    parsedData.customer_name &&\n    parsedData.customer_name !== 'Chưa có';\n\n  const noValidPhoneYet =\n    !parsedData.phone_number ||\n    parsedData.phone_number === 'Chưa có' ||\n    parsedData.phone_number === 'Chưa rõ';\n\n  // Ưu tiên lấy SĐT hợp lệ trực tiếp từ tin nhắn mới nhất\n  // để tránh AI trả về kèm chữ như \"09XXXXXXXX ạ\"\n  if (latestValidPhoneFromText) {\n    parsedData.phone_number = latestValidPhoneFromText;\n  } else if (\n    looksLikePhoneAttempt &&\n    alreadyHasNeed &&\n    noValidPhoneYet &&\n    (alreadyHasName || isSaleUnreachable)\n  ) {\n    parsedData.phone_number = cleanedLatestMessage;\n  }\n\n  // ===============================\n  // KIỂM TRA SỐ ĐIỆN THOẠI\n  // ===============================\n\n  parsedData.has_valid_phone = false;\n  let invalidPhoneAttempt = false;\n\n  if (\n    parsedData.phone_number &&\n    parsedData.phone_number !== 'Chưa có' &&\n    parsedData.phone_number !== 'Chưa rõ'\n  ) {\n    const validPhone = normalizeValidVNPhone(parsedData.phone_number);\n\n    if (validPhone) {\n      parsedData.phone_number = validPhone;\n      parsedData.has_valid_phone = true;\n    } else {\n      parsedData.phone_number = 'Chưa có';\n      parsedData.has_valid_phone = false;\n      invalidPhoneAttempt = true;\n      shouldNotifySale = false;\n      parsedData.handoff_needed = false;\n      parsedData.handoff_reason = 'Không cần';\n      parsedData.reply_message =\n        'Dạ số điện thoại này có vẻ chưa đúng định dạng. Bạn kiểm tra lại giúp mình, SĐT thường gồm 10 số và bắt đầu bằng 03, 05, 07, 08 hoặc 09 nhé.';\n    }\n  }\n\n  // ===============================\n  // TRƯỜNG HỢP SALE KHÔNG LIÊN HỆ ĐƯỢC\n  // ===============================\n\n  if (isSaleUnreachable === true && invalidPhoneAttempt !== true) {\n    parsedData.handoff_needed = true;\n    parsedData.handoff_reason = 'Khách phản hồi sau khi Sale không liên hệ được';\n\n    const latestTextForReply = String(cleanedLatestMessage || '');\n    const latestValidPhone = extractValidVNPhoneFromText(latestTextForReply);\n    const latestHasValidPhone = !!latestValidPhone;\n\n    if (latestHasValidPhone) {\n      parsedData.phone_number = latestValidPhone;\n      parsedData.has_valid_phone = true;\n    }\n\n    const givesCallbackTime =\n      /(\\d{1,2}\\s*h|\\d{1,2}\\s*giờ|hôm nay|ngày mai|chiều|sáng|tối|trưa|lúc|sau \\d|trước \\d|rảnh|tiện nghe|gọi lại lúc|gọi lại vào|liên hệ lại lúc|liên hệ lại vào)/i.test(latestTextForReply);\n\n    if (latestHasValidPhone) {\n      shouldNotifySale = true;\n      parsedData.reply_message =\n        'Dạ mình đã ghi nhận lại số điện thoại của bạn. Bên mình sẽ chuyển chuyên viên liên hệ lại để hỗ trợ chi tiết hơn nhé. Nếu sau khoảng 30 phút bạn chưa thấy bên mình liên hệ, bạn nhắn lại giúp mình để mình kiểm tra và hỗ trợ tiếp nhé.';\n\n    } else if (parsedData.has_valid_phone === true && givesCallbackTime) {\n      shouldNotifySale = true;\n      parsedData.reply_message =\n        'Dạ mình đã ghi nhận thời gian bạn tiện nghe máy. Bên mình sẽ chuyển chuyên viên liên hệ lại để hỗ trợ chi tiết hơn nhé. Nếu đến thời gian đó bạn chưa thấy bên mình liên hệ, bạn nhắn lại giúp mình để mình kiểm tra và hỗ trợ tiếp nhé.';\n\n    } else {\n      shouldNotifySale = false;\n\n      if (parsedData.has_valid_phone === true) {\n        parsedData.reply_message =\n          'Dạ bên mình đã liên hệ nhưng chưa kết nối được với bạn. Bạn xác nhận lại giúp mình số điện thoại đang dùng hoặc cho mình biết thời gian tiện nghe máy để chuyên viên liên hệ lại nhé.';\n      } else {\n        parsedData.reply_message =\n          'Dạ bên mình đã liên hệ nhưng chưa kết nối được với bạn. Bạn cho mình xin lại số điện thoại hoặc thời gian tiện nghe máy để chuyên viên bên mình liên hệ lại nhé.';\n      }\n    }\n\n    if (\n      parsedData.customer_ai_note &&\n      parsedData.customer_ai_note !== 'Chưa có'\n    ) {\n      if (!String(parsedData.customer_ai_note).toLowerCase().includes('không liên hệ được')) {\n        parsedData.customer_ai_note =\n          `${parsedData.customer_ai_note} Sale từng không liên hệ được, khách đã phản hồi lại / cần liên hệ lại.`;\n      }\n    } else {\n      parsedData.customer_ai_note =\n        'Sale từng không liên hệ được, khách đã phản hồi lại / cần liên hệ lại.';\n    }\n  }\n\n  // ===============================\n  // XỬ LÝ KHÁCH CHỌN TÍNH NĂNG CƠ BẢN TRƯỚC\n  // Không hiểu nhầm \"trước\" là deadline\n  // ===============================\n\n  const normalizedLatestForBasicChoice = cleanedLatestMessage\n    .toLowerCase()\n    .normalize('NFD')\n    .replace(/[\\u0300-\\u036f]/g, '')\n    .replace(/đ/g, 'd')\n    .trim();\n\n  const basicChoiceContext = String(\n    parsedData.need_summary + ' ' +\n    parsedData.customer_ai_note + ' ' +\n    (crmData.property_nhu_c_u || '') + ' ' +\n    (crmData.property_tin_nh_n_ch || '')\n  )\n    .toLowerCase()\n    .normalize('NFD')\n    .replace(/[\\u0300-\\u036f]/g, '')\n    .replace(/đ/g, 'd');\n\n  const customerChoseBasicOrderFirst =\n    /dat hang co ban|tinh nang dat hang co ban|co ban truoc|truoc di|truoc da|co ban/i.test(normalizedLatestForBasicChoice) &&\n    /ban hang|my pham|gio hang|san pham|shop|cua hang/i.test(basicChoiceContext);\n\n  if (customerChoseBasicOrderFirst && isSaleUnreachable !== true) {\n    parsedData.handoff_needed = false;\n    parsedData.handoff_reason = 'Không cần';\n    shouldNotifySale = false;\n\n    if (/my pham/i.test(basicChoiceContext)) {\n      parsedData.need_summary =\n        'Website bán hàng mỹ phẩm có giỏ hàng và tính năng đặt hàng cơ bản';\n    } else {\n      parsedData.need_summary =\n        'Website bán hàng có giỏ hàng và tính năng đặt hàng cơ bản';\n    }\n\n    parsedData.reply_message =\n      'Dạ mình đã ghi nhận bạn muốn làm website bán hàng có giỏ hàng và tính năng đặt hàng cơ bản trước. Như vậy mình sẽ chưa ghi nhận thanh toán online hoặc quản lý đơn hàng nâng cao ở giai đoạn này. Bạn đã có tên thương hiệu/logo hoặc danh sách sản phẩm mẫu chưa ạ?';\n\n    parsedData.customer_ai_note =\n      'Khách cần website bán mỹ phẩm có giỏ hàng. Khách muốn dùng tính năng đặt hàng cơ bản trước, chưa chọn thanh toán online/quản lý đơn hàng nâng cao. Cần tư vấn thêm cấu trúc sản phẩm và quy trình đặt hàng cơ bản.';\n  }\n\n  // ===============================\n  // CHỐT LOGIC CHUYỂN SALE BÌNH THƯỜNG\n  // ===============================\n\n  if (\n    parsedData.handoff_needed === true &&\n    parsedData.has_valid_phone !== true &&\n    invalidPhoneAttempt !== true &&\n    isSaleUnreachable !== true\n  ) {\n    const latestTextForReply = String(cleanedLatestMessage || '');\n\n    const normalizedLatestForQuestion = latestTextForReply\n      .toLowerCase()\n      .normalize('NFD')\n      .replace(/[\\u0300-\\u036f]/g, '')\n      .replace(/đ/g, 'd');\n\n    const isPriceQuestion =\n      /bao gia|chi phi|ngan sach|gia chot|giam gia|bao nhieu tien|het bao nhieu|tam bao nhieu/i.test(normalizedLatestForQuestion) ||\n      /(\\d+)\\s*(trieu|tr)\\b/i.test(normalizedLatestForQuestion);\n\n    const isTimeQuestion =\n      /deadline|han chot|bao lau|may ngay|may tuan|thoi gian|khi nao xong|ngay ban giao|ban giao khi nao|cuoi thang|dau thang|truoc ngay|truoc thang|truoc \\d{1,2}/i.test(normalizedLatestForQuestion);\n\n    let ackMessage = 'Dạ mình đã ghi nhận thông tin của bạn.';\n    let detailMessage = 'Phần này cần chuyên viên kiểm tra theo nhu cầu thực tế để tư vấn chính xác hơn.';\n\n    if (isPriceQuestion && isTimeQuestion) {\n      ackMessage = 'Dạ mình đã ghi nhận phần ngân sách và thời gian mong muốn của bạn.';\n      detailMessage = 'Phần báo giá và thời gian triển khai cần chuyên viên kiểm tra theo tính năng thực tế để tư vấn chính xác hơn.';\n    } else if (isPriceQuestion) {\n      ackMessage = 'Dạ mình đã ghi nhận phần chi phí/ngân sách bạn đang quan tâm.';\n      detailMessage = 'Phần báo giá cần chuyên viên kiểm tra theo loại website, giao diện và tính năng thực tế để tư vấn chính xác hơn.';\n    } else if (isTimeQuestion) {\n      ackMessage = 'Dạ mình đã ghi nhận thời gian mong muốn của bạn.';\n      detailMessage = 'Thời gian triển khai cần chuyên viên kiểm tra theo khối lượng tính năng thực tế để tư vấn chính xác hơn.';\n    }\n\n    parsedData.reply_message =\n      `${ackMessage} ${detailMessage} Bạn cho mình xin số điện thoại để bên mình liên hệ hỗ trợ chi tiết nhé.`;\n  }\n\n  if (\n    parsedData.handoff_needed === true &&\n    parsedData.has_valid_phone === true &&\n    isSaleUnreachable !== true\n  ) {\n    shouldNotifySale = true;\n    parsedData.reply_message =\n      'Dạ mình đã ghi nhận nhu cầu của bạn và đã chuyển thông tin cho chuyên viên tư vấn. Bên mình sẽ liên hệ qua số điện thoại bạn đã cung cấp để hỗ trợ chi tiết hơn nhé. Nếu sau khoảng 30 phút bạn chưa thấy bên mình liên hệ, bạn nhắn lại giúp mình để mình kiểm tra và hỗ trợ tiếp nhé.';\n  }\n\n  if (parsedData.handoff_needed !== true) {\n    parsedData.handoff_reason = 'Không cần';\n    shouldNotifySale = false;\n  }\n\n  // ===============================\n  // XỬ LÝ CÂU TRẢ LỜI MƠ HỒ KIỂU \"CÓ Ạ\"\n  // Tránh tự hiểu khách cần tất cả tính năng\n  // ===============================\n\n  const normalizedLatestMessageForIntent = cleanedLatestMessage\n    .toLowerCase()\n    .normalize('NFD')\n    .replace(/[\\u0300-\\u036f]/g, '')\n    .replace(/đ/g, 'd')\n    .trim();\n\n  const latestIsOnlyVagueYes =\n    /^(co|co a|da co|ok|duoc|uh|u|yes)$/i.test(normalizedLatestMessageForIntent);\n\n  const summaryForVagueCheck = String(\n    parsedData.need_summary + ' ' +\n    parsedData.customer_ai_note + ' ' +\n    parsedData.reply_message + ' ' +\n    (crmData.property_nhu_c_u || '') + ' ' +\n    (crmData.property_tin_nh_n_ch || '')\n  )\n    .toLowerCase()\n    .normalize('NFD')\n    .replace(/[\\u0300-\\u036f]/g, '')\n    .replace(/đ/g, 'd');\n\n  const vagueSalesWebsiteContext =\n    /my pham|ban hang|gio hang|san pham|shop|cua hang/i.test(summaryForVagueCheck);\n\n  const parsedThinksBothPaymentAndOrder =\n    /thanh toan online|cong thanh toan|payment/i.test(summaryForVagueCheck) &&\n    /quan ly don hang|don hang/i.test(summaryForVagueCheck);\n\n  const customerClearlySaidBothInLatest =\n    /ca hai|can ca hai|lam ca hai|tat ca|ca thanh toan.*quan ly/i.test(normalizedLatestMessageForIntent);\n\n  if (\n    latestIsOnlyVagueYes &&\n    vagueSalesWebsiteContext &&\n    parsedThinksBothPaymentAndOrder &&\n    !customerClearlySaidBothInLatest &&\n    !customerChoseBasicOrderFirst\n  ) {\n    parsedData.handoff_needed = false;\n    parsedData.handoff_reason = 'Không cần';\n    shouldNotifySale = false;\n    parsedData.reply_message =\n      'Dạ bạn muốn tích hợp cả thanh toán online và quản lý đơn hàng, hay chỉ cần một trong hai tính năng đó trước ạ?';\n  }\n\n  // ===============================\n  // LÀM SẠCH + GIỮ GHI CHÚ KHÁCH / AI\n  // Không để ghi chú cũ bị ghi đè bởi ghi chú quá chung chung\n  // ===============================\n\n  let cleanedAiNote = String(parsedData.customer_ai_note || '').trim();\n\n  const existingAiNoteFromCrm = String(\n    crmData.property_ghi_ch_kh_ch_ai ||\n    crmData.property_ghi_chu_khach_ai ||\n    ''\n  ).trim();\n\n  const allCustomerTextForNote = [\n    crmData.property_nhu_c_u,\n    existingAiNoteFromCrm,\n    parsedData.need_summary,\n    parsedData.customer_ai_note,\n    crmData.property_tin_nh_n_ch,\n    cleanedLatestMessage\n  ]\n    .filter(Boolean)\n    .join('\\n');\n\n  const normalizedCustomerTextForNote = allCustomerTextForNote\n    .toLowerCase()\n    .normalize('NFD')\n    .replace(/[\\u0300-\\u036f]/g, '')\n    .replace(/đ/g, 'd');\n\n  function normalizeNoteText(value) {\n    return String(value || '')\n      .toLowerCase()\n      .normalize('NFD')\n      .replace(/[\\u0300-\\u036f]/g, '')\n      .replace(/đ/g, 'd')\n      .trim();\n  }\n\n  function isEmptyNote(note) {\n    const n = normalizeNoteText(note);\n    return (\n      !n ||\n      n === 'chua co' ||\n      n === 'khong co' ||\n      n === 'null' ||\n      n === 'undefined'\n    );\n  }\n\n  function isGenericNote(note) {\n    const n = normalizeNoteText(note);\n\n    if (isEmptyNote(note)) return true;\n\n    return (\n      n === 'khach can tu van website.' ||\n      n === 'khach can tu van website' ||\n      n === 'khach can sale ho tro.' ||\n      n === 'khach can sale ho tro' ||\n      n === 'khach can tu van them.' ||\n      n === 'khach can tu van them' ||\n      n.length < 35\n    );\n  }\n\n  function noteContainsBadGuess(note) {\n    return /do dự|do du|lưỡng lự|luong lu|phân vân|phan van|chưa chắc|chua chac|hoàn tư|hoan tu|muốn hoàn tư|muon hoan tu|đầy đủ thông tin|day du thong tin|đã cung cấp đầy đủ|da cung cap day du/i.test(\n      String(note || '')\n    );\n  }\n\n  const customerMentionedLater =\n    /để sau|de sau|bổ sung sau|bo sung sau|cái đó để sau|cai do de sau/i.test(normalizedCustomerTextForNote);\n\n  const contextIsBrandOrLogo =\n    /tên thương hiệu|ten thuong hieu|thương hiệu|thuong hieu|logo|hình ảnh|hinh anh/i.test(normalizedCustomerTextForNote);\n\n  const customerSaidVagueYesForNote =\n    /^(co|co a|da co|ok|duoc|uh|u|yes)$/i.test(normalizedLatestMessageForIntent);\n\n  const customerClearlySaidBoth =\n    /cả hai|ca hai|cần cả hai|can ca hai|làm cả hai|lam ca hai|tất cả|tat ca|cả thanh toán.*quản lý|ca thanh toan.*quan ly/i.test(normalizedCustomerTextForNote);\n\n  const customerClearlySaidPayment =\n    /cần thanh toán online|can thanh toan online|thanh toán online|thanh toan online|cổng thanh toán|cong thanh toan|payment/i.test(normalizedCustomerTextForNote);\n\n  const customerClearlySaidOrderManagement =\n    /cần quản lý đơn hàng|can quan ly don hang|quản lý đơn hàng|quan ly don hang|theo dõi đơn hàng|theo doi don hang/i.test(normalizedCustomerTextForNote);\n\n  const hasOnlinePayment =\n    /thanh toán online|thanh toan online|payment|cổng thanh toán|cong thanh toan/i.test(normalizedCustomerTextForNote);\n\n  const hasOrderManagement =\n    /quản lý đơn hàng|quan ly don hang|đơn hàng|don hang/i.test(normalizedCustomerTextForNote);\n\n  const hasCart =\n    /giỏ hàng|gio hang|cart/i.test(normalizedCustomerTextForNote);\n\n  const hasProductCatalog =\n    /danh mục|danh muc|sản phẩm|san pham|trang chi tiết|trang chi tiet|chi tiết sản phẩm|chi tiet san pham/i.test(normalizedCustomerTextForNote);\n\n  const hasBeautyWebsite =\n    /mỹ phẩm|my pham/i.test(normalizedCustomerTextForNote);\n\n  const hasRealEstateWebsite =\n    /bất động sản|bat dong san/i.test(normalizedCustomerTextForNote);\n\n  const hasLandingPage =\n    /landing/i.test(normalizedCustomerTextForNote);\n\n  const hasSalesWebsite =\n    /bán hàng|ban hang|shop|cửa hàng|cua hang/i.test(normalizedCustomerTextForNote);\n\n  function buildCleanNoteFromCustomerText() {\n    const parts = [];\n\n    if (hasBeautyWebsite) {\n      parts.push('Khách cần website bán mỹ phẩm');\n    } else if (hasRealEstateWebsite) {\n      parts.push('Khách cần website bất động sản');\n    } else if (hasLandingPage) {\n      parts.push('Khách cần landing page');\n    } else if (hasSalesWebsite) {\n      parts.push('Khách cần website bán hàng');\n    } else {\n      parts.push('Khách cần tư vấn website');\n    }\n\n    const features = [];\n\n    if (hasProductCatalog) {\n      features.push('danh mục/trang chi tiết sản phẩm');\n    }\n\n    if (hasCart) {\n      features.push('giỏ hàng');\n    }\n\n    // Chỉ ghi chắc chắn thanh toán online nếu khách nói rõ, hoặc nói rõ cần cả hai\n    if (customerClearlySaidPayment || customerClearlySaidBoth) {\n      features.push('thanh toán online');\n    }\n\n    // Chỉ ghi chắc chắn quản lý đơn hàng nếu khách nói rõ, hoặc nói rõ cần cả hai\n    if (customerClearlySaidOrderManagement || customerClearlySaidBoth) {\n      features.push('quản lý đơn hàng');\n    }\n\n    if (/dự án|du an/i.test(normalizedCustomerTextForNote)) {\n      features.push('danh sách/giới thiệu dự án');\n    }\n\n    if (/bộ lọc|bo loc|lọc khu vực|loc khu vuc|khu vực|khu vuc/i.test(normalizedCustomerTextForNote)) {\n      features.push('bộ lọc khu vực');\n    }\n\n    if (/form|liên hệ|lien he|tư vấn|tu van/i.test(normalizedCustomerTextForNote)) {\n      features.push('form liên hệ/nhận tư vấn');\n    }\n\n    if (features.length > 0) {\n      parts.push(`Chức năng đã nêu: ${features.join(', ')}`);\n    }\n\n    if (\n      customerSaidVagueYesForNote &&\n      (hasOnlinePayment || hasOrderManagement) &&\n      !customerClearlySaidBoth &&\n      !customerClearlySaidPayment &&\n      !customerClearlySaidOrderManagement\n    ) {\n      parts.push('Khách đang quan tâm thêm thanh toán online hoặc quản lý đơn hàng nhưng chưa xác nhận rõ phạm vi');\n    }\n\n    if (customerMentionedLater) {\n      if (contextIsBrandOrLogo) {\n        parts.push('Khách muốn bổ sung tên thương hiệu/logo sau');\n      } else {\n        parts.push('Khách muốn bổ sung thêm thông tin sau');\n      }\n    }\n\n    const budgetMatch = allCustomerTextForNote.match(/(\\d+)\\s*(tr|triệu|trieu)/i);\n    if (budgetMatch) {\n      parts.push(`Khách hỏi ngân sách khoảng ${budgetMatch[1]} triệu có làm được không`);\n    }\n\n    if (/giá|gia|bao nhiêu|bao nhieu|chi phí|chi phi|báo giá|bao gia|ngân sách|ngan sach/i.test(normalizedCustomerTextForNote)) {\n      parts.push('Cần Sale xác nhận lại giá/báo giá');\n    }\n\n    if (/deadline|cuối tháng|cuoi thang|xong|hoàn thành|hoan thanh|bàn giao|ban giao/i.test(normalizedCustomerTextForNote)) {\n      parts.push('Cần Sale xác nhận lại thời gian triển khai');\n    }\n\n    if (\n      customerClearlySaidPayment ||\n      customerClearlySaidOrderManagement ||\n      customerClearlySaidBoth\n    ) {\n      parts.push('Cần Sale tư vấn thêm quy trình và phạm vi triển khai phù hợp');\n    }\n\n    return parts\n      .filter(Boolean)\n      .join('. ')\n      .replace(/\\.\\s*\\./g, '.')\n      .trim() + '.';\n  }\n\n  function splitNoteSentences(note) {\n    return String(note || '')\n      .split('.')\n      .map(s => s.trim())\n      .filter(Boolean);\n  }\n\n  function mergeNotes(oldNote, newNote) {\n    const oldIsUseful = !isGenericNote(oldNote) && !noteContainsBadGuess(oldNote);\n    const newIsUseful = !isGenericNote(newNote) && !noteContainsBadGuess(newNote);\n\n    if (oldIsUseful && !newIsUseful) {\n      return oldNote;\n    }\n\n    if (!oldIsUseful && newIsUseful) {\n      return newNote;\n    }\n\n    if (!oldIsUseful && !newIsUseful) {\n      return newNote || oldNote || 'Chưa có';\n    }\n\n    const oldSentences = splitNoteSentences(oldNote);\n    const newSentences = splitNoteSentences(newNote);\n\n    const result = [];\n    const seen = new Set();\n\n    for (const sentence of [...oldSentences, ...newSentences]) {\n      const key = normalizeNoteText(sentence)\n        .replace(/[^a-z0-9\\s]/g, '')\n        .replace(/\\s+/g, ' ')\n        .trim();\n\n      if (!key || seen.has(key)) continue;\n\n      // Bỏ câu quá chung nếu đã có câu chi tiết hơn\n      if (\n        key === 'khach can tu van website' &&\n        result.some(x => normalizeNoteText(x).includes('website ban'))\n      ) {\n        continue;\n      }\n\n      seen.add(key);\n      result.push(sentence);\n    }\n\n    return result.slice(-5).join('. ') + '.';\n  }\n\n  let rebuiltNote = buildCleanNoteFromCustomerText();\n\n  // Nếu khách đã chọn đặt hàng cơ bản trước, ghi chú phải ưu tiên đúng ý này\n  if (customerChoseBasicOrderFirst) {\n    cleanedAiNote =\n      'Khách cần website bán mỹ phẩm có giỏ hàng. Khách muốn dùng tính năng đặt hàng cơ bản trước, chưa chọn thanh toán online/quản lý đơn hàng nâng cao. Cần tư vấn thêm cấu trúc sản phẩm và quy trình đặt hàng cơ bản.';\n  } else {\n    if (\n      noteContainsBadGuess(cleanedAiNote) ||\n      isGenericNote(cleanedAiNote)\n    ) {\n      cleanedAiNote = rebuiltNote;\n    }\n\n    // Nếu AI ghi chắc cả thanh toán online và quản lý đơn hàng chỉ vì khách nói \"có ạ\", viết lại cho an toàn\n    if (\n      customerSaidVagueYesForNote &&\n      !customerClearlySaidBoth &&\n      !customerClearlySaidPayment &&\n      !customerClearlySaidOrderManagement &&\n      /thanh toán online|thanh toan online/i.test(cleanedAiNote) &&\n      /quản lý đơn hàng|quan ly don hang/i.test(cleanedAiNote)\n    ) {\n      cleanedAiNote = rebuiltNote;\n    }\n\n    // Ghép ghi chú cũ trong CRM với ghi chú mới, tránh mất chi tiết ban đầu\n    cleanedAiNote = mergeNotes(existingAiNoteFromCrm, cleanedAiNote);\n\n    // Nếu sau khi ghép vẫn quá chung, dùng bản dựng lại từ nhu cầu + tin nhắn\n    if (isGenericNote(cleanedAiNote)) {\n      cleanedAiNote = rebuiltNote;\n    }\n  }\n\n  // Giới hạn độ dài ghi chú để Notion dễ đọc\n  if (cleanedAiNote.length > 900) {\n    cleanedAiNote = cleanedAiNote.slice(0, 900).trim();\n  }\n\n  parsedData.customer_ai_note = cleanedAiNote || 'Chưa có';\n\n  return [{\n    json: {\n      customer_name: parsedData.customer_name,\n      phone_number: parsedData.phone_number,\n      need_summary: parsedData.need_summary,\n      customer_ai_note: parsedData.customer_ai_note,\n      reply_message: parsedData.reply_message,\n      has_valid_phone: parsedData.has_valid_phone,\n      handoff_needed: parsedData.handoff_needed,\n      handoff_reason: parsedData.handoff_reason,\n      should_notify_sale: shouldNotifySale\n    }\n  }];\n\n} catch (error) {\n  return [{\n    json: {\n      customer_name: 'Chưa có',\n      phone_number: 'Chưa có',\n      need_summary: 'Chưa có',\n      customer_ai_note: 'Chưa có',\n      has_valid_phone: false,\n      handoff_needed: false,\n      handoff_reason: 'Lỗi parse JSON',\n      should_notify_sale: false,\n      reply_message:\n        'Dạ mình đang xử lý lại thông tin của bạn. Bạn cho mình biết thêm nhu cầu chính của website để mình tư vấn đúng hơn nhé.'\n    }\n  }];\n}"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2576,
+        -16
+      ],
+      "id": "a485dace-b0fa-4431-b14d-c5125e937da7",
+      "name": "JS - Kiểm tra & chốt logic"
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "update",
+        "pageId": {
+          "__rl": true,
+          "value": "={{ $('Notion - Đọc lead sau gom tin').first().json.id }}",
+          "mode": "id"
+        },
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Tên khách hàng|title",
+              "title": "={{ $('JS - Kiểm tra & chốt logic').first().json.customer_name }}"
+            },
+            {
+              "key": "Số điện thoại|rich_text",
+              "textContent": "={{ $('JS - Kiểm tra & chốt logic').first().json.phone_number }}"
+            },
+            {
+              "key": "Nhu cầu|rich_text",
+              "textContent": "={{ $('JS - Kiểm tra & chốt logic').first().json.need_summary }}"
+            },
+            {
+              "key": "Trạng thái BOT|status",
+              "statusValue": "={{ $('JS - Kiểm tra & chốt logic').first().json.has_valid_phone === true ? 'Đã có SĐT' : 'Thiếu SĐT' }}"
+            },
+            {
+              "key": "Tin nhắn chờ|rich_text",
+              "textContent": "={{ '' }}"
+            },
+            {
+              "key": "Cần Sale hỗ trợ?|checkbox",
+              "checkboxValue": "={{ $('JS - Kiểm tra & chốt logic').first().json.handoff_needed === true }}"
+            },
+            {
+              "key": "Lý do chuyển Sale|rich_text",
+              "richText": true,
+              "text": {
+                "text": [
+                  {
+                    "text": "={{ String($('JS - Kiểm tra & chốt logic').first().json.handoff_reason || 'Không cần') }}",
+                    "annotationUi": {}
+                  }
+                ]
+              }
+            },
+            {
+              "key": "Ghi chú khách / AI|rich_text",
+              "textContent": "={{ $('JS - Kiểm tra & chốt logic').first().json.customer_ai_note || '' }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        2976,
+        -16
+      ],
+      "id": "6a9a68cb-bea6-40f7-8acd-507570f3e3ee",
+      "name": "Notion - Cập nhật lead sau AI",
+      "retryOnFail": true
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram - Nhận tin nhắn').item.json.message.chat.id }}",
+        "text": "={{ $('JS - Kiểm tra & chốt logic').item.json.reply_message }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        3280,
+        256
+      ],
+      "id": "53ce716e-358d-4710-8efc-8b13f6226743",
+      "name": "Telegram - Trả lời khách"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "a096e2ba-49a7-4c44-bc33-bbdb9d784c47",
+              "leftValue": "={{ $('JS - Kiểm tra & chốt logic').first().json.has_valid_phone === true }}",
+              "rightValue": "{{ $('Code in JavaScript').first().json.has_valid_phone === true }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "481c06e1-9bcf-4255-b366-b1a3cbae353d",
+              "leftValue": "={{ $('JS - Kiểm tra & chốt logic').first().json.handoff_needed === true }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "b9e5bc43-1192-42a1-90ba-511a66f52602",
+              "leftValue": "={{ $('Notion - Đọc lead sau gom tin').first().json.property_b_o_sale !== true }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "be153101-5a58-4d56-a97a-c6b19adc0d00",
+              "leftValue": "={{ $('Notion - Đọc lead sau gom tin').first().json.property_bot_t_m_d_ng !== true }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "83f685e7-3b8f-4511-a7c1-761c9b82cdf6",
+              "leftValue": "={{ $('JS - Kiểm tra & chốt logic').first().json.should_notify_sale === true }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        3648,
+        -112
+      ],
+      "id": "55f1d9cb-8fa3-4cea-857e-adaf8b701891",
+      "name": "IF - Đủ điều kiện báo Sale?"
+    },
+    {
+      "parameters": {
+        "chatId": "YOUR_TELEGRAM_SALE_CHAT_ID",
+        "text": "=🚨 <b>CÓ KHÁCH CẦN SALE HỖ TRỢ</b> 🚨\nHệ thống vừa thu thập được một khách hàng tiềm năng cần tư vấn:\n\n👤 <b>Tên khách:</b> {{ $('JS - Kiểm tra & chốt logic').first().json.customer_name }}\n📱 <b>SĐT:</b> <a href=\"tel:{{ $('JS - Kiểm tra & chốt logic').first().json.phone_number }}\">{{ $('JS - Kiểm tra & chốt logic').first().json.phone_number }}</a>\n🎯 <b>Nhu cầu:</b> {{ $('JS - Kiểm tra & chốt logic').first().json.need_summary }}\n📝 <b>Ghi chú:</b> {{ $('JS - Kiểm tra & chốt logic').first().json.customer_ai_note }}\n⚠️ <b>Lý do chuyển Sale:</b> {{ $('JS - Kiểm tra & chốt logic').first().json.handoff_reason }}\n\n👉 Sale gọi khách để tư vấn chi tiết nhé.",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        3888,
+        -128
+      ],
+      "id": "7f1f51e1-7293-4f2b-a3d4-51ecdf4ef62b",
+      "name": "Telegram - Báo Sale"
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "update",
+        "pageId": {
+          "__rl": true,
+          "value": "={{ $('Notion - Đọc lead sau gom tin').first().json.id }}",
+          "mode": "id"
+        },
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Trạng thái BOT|status",
+              "statusValue": "={{ 'Đã chuyển Sale' }}"
+            },
+            {
+              "key": "Giai đoạn Sale|status",
+              "statusValue": "={{ 'Chờ sale gọi' }}"
+            },
+            {
+              "key": "Đã báo Sale?|checkbox",
+              "checkboxValue": "={{ true }}"
+            },
+            {
+              "key": "Bot tạm dừng?|checkbox",
+              "checkboxValue": "={{ true }}"
+            },
+            {
+              "key": "Cần Sale hỗ trợ?|checkbox",
+              "checkboxValue": "={{ true }}"
+            },
+            {
+              "key": "Đã chuyển Sale lúc|date",
+              "date": "={{ $now.setZone('Asia/Ho_Chi_Minh').toISO() }}",
+              "timezone": "Asia/Ho_Chi_Minh"
+            },
+            {
+              "key": "Lý do tạm dừng|rich_text",
+              "textContent": "={{ 'Đã chuyển Sale' }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        4096,
+        -128
+      ],
+      "id": "a3a4ff33-9264-4c6b-b6d9-de5fa9a4ea22",
+      "name": "Notion - Đánh dấu đã báo Sale"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent - Tư vấn khách",
+            "type": "ai_languageModel",
+            "index": 0
+          },
+          {
+            "node": "LLM - Trích xuất JSON",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Đã báo chuyển sale?": {
+      "main": [
+        [
+          {
+            "node": "Dừng chatbot",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Code kiểm tra spam",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code kiểm tra spam": {
+      "main": [
+        [
+          {
+            "node": "Cập nhật theo dõi spam",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cập nhật theo dõi spam": {
+      "main": [
+        [
+          {
+            "node": "Chặn AI?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chặn AI?": {
+      "main": [
+        [
+          {
+            "node": "Spam nặng?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "AI Agent - Tư vấn khách",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dừng chatbot1": {
+      "main": [
+        []
+      ]
+    },
+    "Spam nặng?": {
+      "main": [
+        [
+          {
+            "node": "Cập nhật trạng thái spam nặng",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Dừng chatbot1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cập nhật trạng thái spam nặng": {
+      "main": [
+        [
+          {
+            "node": "Dừng chatbot1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait2": {
+      "main": [
+        [
+          {
+            "node": "Search Khách cũ lần 1B",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Khách cũ lần 1B": {
+      "main": [
+        [
+          {
+            "node": "Đã có page sau khi chờ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Đã có page sau khi chờ?": {
+      "main": [
+        [
+          {
+            "node": "Update page sau kiểm tra trùng",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Notion - Tạo lead mới",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update page sau kiểm tra trùng": {
+      "main": [
+        [
+          {
+            "node": "Wait - Gom tin 15s",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram - Nhắc nhắn bằng chữ": {
+      "main": [
+        []
+      ]
+    },
+    "Notion - Tìm khách theo Chat ID": {
+      "main": [
+        [
+          {
+            "node": "IF - Khách cũ hay mới?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notion - Cập nhật tin khách cũ": {
+      "main": [
+        [
+          {
+            "node": "Wait - Gom tin 15s",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notion - Tạo lead mới": {
+      "main": [
+        [
+          {
+            "node": "Wait - Gom tin 15s",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Khách cũ hay mới?": {
+      "main": [
+        [
+          {
+            "node": "Notion - Cập nhật tin khách cũ",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wait2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Tin nhắn có chữ?": {
+      "main": [
+        [
+          {
+            "node": "Wait1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram - Nhắc nhắn bằng chữ",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram - Nhận tin nhắn": {
+      "main": [
+        [
+          {
+            "node": "IF - Tin nhắn có chữ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait1": {
+      "main": [
+        [
+          {
+            "node": "Notion - Tìm khách theo Chat ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait - Gom tin 15s": {
+      "main": [
+        [
+          {
+            "node": "Notion - Đọc lead sau gom tin",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notion - Đọc lead sau gom tin": {
+      "main": [
+        [
+          {
+            "node": "IF - Chỉ xử lý tin cuối",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Chỉ xử lý tin cuối": {
+      "main": [
+        [
+          {
+            "node": "Đã báo chuyển sale?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "AI Agent - Tư vấn khách": {
+      "main": [
+        [
+          {
+            "node": "LLM - Trích xuất JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM - Trích xuất JSON": {
+      "main": [
+        [
+          {
+            "node": "JS - Kiểm tra & chốt logic",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "JS - Kiểm tra & chốt logic": {
+      "main": [
+        [
+          {
+            "node": "Notion - Cập nhật lead sau AI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notion - Cập nhật lead sau AI": {
+      "main": [
+        [
+          {
+            "node": "Telegram - Trả lời khách",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "IF - Đủ điều kiện báo Sale?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Đủ điều kiện báo Sale?": {
+      "main": [
+        [
+          {
+            "node": "Telegram - Báo Sale",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram - Báo Sale": {
+      "main": [
+        [
+          {
+            "node": "Notion - Đánh dấu đã báo Sale",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "tags": []
+}

@@ -1,0 +1,10 @@
+# Chỉ cho phép file đã làm sạch (.example.json)
+workflows/*.json
+!workflows/*.example.json
+/*.json
+
+# Bí mật và file hệ thống
+.env
+*.env
+.DS_Store
+Thumbs.db
