@@ -1,31 +1,31 @@
 # Telegram AI CRM Automation
 
-Tự động tiếp nhận khách hàng từ Telegram, tư vấn bước đầu bằng AI, lưu thông tin
-vào Notion CRM và chỉ chuyển cho Sale khi khách thật sự cần hỗ trợ trực tiếp.
+Automatically receives customers from Telegram, provides initial AI-powered consultation, saves the
+information to a Notion CRM, and hands off to Sales only when the customer genuinely needs direct support.
 
-## Điểm nổi bật
-- Chống tạo trùng lead bằng Chat ID
-- Gom nhiều tin nhắn liên tiếp của khách để bot không trả lời từng dòng nhỏ
-- Không chuyển Sale khi khách mới nói nhu cầu chung, chỉ chuyển khi có SĐT hợp lệ và nhu cầu rõ
-- Tự ghi chú khách cho Sale, tạm dừng bot sau khi đã chuyển Sale
-- Phát hiện spam, tin nhắn lặp, và xử lý trường hợp Sale không liên hệ được
+## Highlights
+- Prevents duplicate leads using the Chat ID
+- Batches a customer's consecutive messages so the bot doesn't reply to every short line
+- Doesn't hand off to Sales when a customer has only stated a general need; hands off only with a valid phone number and a clear need
+- Automatically writes customer notes for Sales and pauses the bot after handoff
+- Detects spam and repeated messages, and handles cases where Sales can't reach the customer
 
-## Luồng xử lý
-1. Nhận tin nhắn từ Telegram
-2. Kiểm tra khách cũ trong Notion CRM
-3. Chống tạo trùng lead mới
-4. Gom tin nhắn và chốt tin cuối
-5. Kiểm tra đã chuyển Sale chưa
-6. Kiểm tra spam và tin nhắn lặp
-7. AI tư vấn và chuẩn hoá dữ liệu thành JSON
-8. Cập nhật CRM và trả lời khách
-9. Chuyển lead cho Sale qua nhóm Telegram
+## Workflow
+1. Receive a message from Telegram
+2. Check for an existing customer in the Notion CRM
+3. Prevent creating a duplicate lead
+4. Batch messages and take the final one
+5. Check whether the lead has already been handed off to Sales
+6. Check for spam and repeated messages
+7. AI consults the customer and normalizes the data into JSON
+8. Update the CRM and reply to the customer
+9. Hand off the lead to Sales via a Telegram group
 
-## Công nghệ
+## Tech Stack
 n8n, Telegram Bot, Notion API, Google Gemini (AI Agent + Basic LLM Chain), JavaScript
 
-## Cách cài đặt
-1. Trong n8n chọn Import from file, nạp `workflows/automation-telegram.example.json`.
-2. Tạo credentials: Telegram, Notion, Google Gemini.
-3. Thay các placeholder `YOUR_...` bằng giá trị thật (ID database Notion, Chat ID nhóm Sale).
-4. Tạo database Notion với các cột workflow sử dụng (Chat ID, Tin nhắn chờ, Bot tạm dừng?, Giai đoạn Sale...).
+## Setup
+1. In n8n, choose Import from file and load `workflows/automation-telegram.example.json`.
+2. Create credentials: Telegram, Notion, Google Gemini.
+3. Replace the `YOUR_...` placeholders with your own values (Notion database ID, Sales group Chat ID).
+4. Create a Notion database with the columns the workflow uses (Chat ID, Tin nhắn chờ [pending messages], Bot tạm dừng? [bot paused?], Giai đoạn Sale [sales stage], ...).
